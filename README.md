@@ -1,2 +1,0 @@
-# GastosElia
-Control de gastos 
