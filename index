@@ -543,11 +543,15 @@ if (window._appInitFn) window._appInitFn();
   <div class="tab-content active" id="tab-dashboard">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
       <div class="section-title" style="margin:0"><span class="dot"></span> Vista general — <span id="memberNameTitle">Todos</span></div>
-      <div style="display:flex;gap:0.5rem;">
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        <select class="filter-select" id="dashMonthFilter" onchange="renderDashboard()">
+          <option value="">Todos los meses</option>
+        </select>
         <select class="filter-select" id="dashPeriod" onchange="renderDashboard()">
           <option value="week">Esta semana</option>
           <option value="month" selected>Este mes</option>
           <option value="year">Este año</option>
+          <option value="all">Todo el tiempo</option>
         </select>
       </div>
     </div>
@@ -621,6 +625,17 @@ if (window._appInitFn) window._appInitFn();
   <!-- TRANSACTIONS TAB -->
   <div class="tab-content" id="tab-transactions">
     <div class="section-title" style="margin-bottom:0.8rem"><span class="dot"></span> Historial de transacciones</div>
+
+    <!-- PASTE FROM SPREADSHEET -->
+    <div class="form-card" style="margin-bottom:1rem;padding:1rem 1.2rem;">
+      <div style="font-size:0.82rem;font-weight:600;color:var(--text);margin-bottom:0.5rem;">📋 Pegar desde Excel / Google Sheets</div>
+      <p style="font-size:0.75rem;color:var(--muted);margin-bottom:0.6rem;">Copia filas de tu hoja de cálculo y pégalas aquí. Columnas esperadas: <strong>Fecha | Concepto | Monto</strong> (separadas por tabulador)</p>
+      <div style="display:flex;gap:0.6rem;align-items:flex-start;">
+        <textarea id="pasteArea" rows="3" placeholder="Pega aquí los datos copiados de Excel..." style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:0.6rem;font-family:monospace;font-size:0.8rem;outline:none;resize:vertical;"></textarea>
+        <button class="btn-primary" onclick="parsePastedData()" style="padding:0.6rem 1rem;font-size:0.82rem;white-space:nowrap;">Importar</button>
+      </div>
+      <div id="pastePreview" style="margin-top:0.5rem;font-size:0.75rem;color:var(--muted);"></div>
+    </div>
     <div class="table-filters">
       <select class="filter-select" id="filterMonth" onchange="renderTransactions()">
         <option value="">Todos los meses</option>
@@ -815,7 +830,7 @@ const DEFAULT_CATEGORIES = {
 };
 
 let state = {
-  members: ['Omar','Elia'],
+  members: ['Omar','Elia','Miguel'],
   currentMember: null,
   transactions: [],
   currentType: 'income',
@@ -856,37 +871,7 @@ function hideLoading() {
 }
 
 function generateDemoData() {
-  const now = new Date();
-  const demos = [];
-  const conceptos = [
-    ['expense','Medicamentos','Recetados','Escitalopram 10mg',112,'Omar'],
-    ['expense','Medicamentos','Parches','Parches Exelon',2850,'Omar'],
-    ['expense','Consulta Médica','Podólogo','Consulta podólogo',400,'Elia'],
-    ['expense','Higiene Personal','Aseo','Desodorante + jabón',77,'Omar'],
-    ['expense','Transporte','Gasolina','Gasolina traslado',300,'Omar'],
-    ['expense','Alimentación','Despensa','Compra semanal',650,'Elia'],
-    ['expense','Trámites','Documentos','Envío documentos MX',255,'Omar'],
-    ['income','Transferencia','Transferencia BBVA','BBVA Omar',8000,'Omar'],
-    ['income','Transferencia','Mercado Pago','Transferencia MP',1850,'Elia'],
-  ];
-  for (let m = 0; m < 4; m++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
-    const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    conceptos.forEach(([type,cat,sub,desc,amt,mem]) => {
-      demos.push({
-        id: uid(),
-        date: `${ym}-${String(5+Math.floor(Math.random()*20)).padStart(2,'0')}`,
-        member: mem,
-        type,
-        paymentSource: type==='income' ? (mem==='Omar'?'BBVA Omar':'BBVA Elia') : (Math.random()>0.5?'BBVA Omar':'Tarjeta Elia'),
-        category: cat,
-        subcategory: sub,
-        amount: amt + Math.floor(Math.random()*50 - 25),
-        desc
-      });
-    });
-  }
-  state.transactions = demos;
+  state.transactions = [{"id":"y00hxnlky","date":"2025-03-31","member":"Miguel","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":112.0,"desc":"Escitalopram"},{"id":"kr3h4wb3u","date":"2025-03-02","member":"Miguel","type":"expense","paymentSource":"BBVA Omar","category":"Higiene Personal","subcategory":"Aseo","amount":49.5,"desc":"Jabon Tocador"},{"id":"4mf37w2a9","date":"2025-03-02","member":"Miguel","type":"expense","paymentSource":"BBVA Omar","category":"Higiene Personal","subcategory":"Aseo","amount":28.0,"desc":"Desodorante"},{"id":"244j3jk2d","date":"2025-03-02","member":"Miguel","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":164.0,"desc":"Medicameno Acc"},{"id":"2lslk9xpt","date":"2025-05-21","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Trámites","subcategory":"Documentos","amount":255.0,"desc":"Se Paga Envio Doctos A Mx"},{"id":"bs62sxtb2","date":"2025-05-21","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Transporte","subcategory":"Gasolina","amount":300.0,"desc":"Gasolina Por Traslado A Banderilla Y Regreso A Coatepec"},{"id":"fhpyky57c","date":"2025-05-24","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Transporte","subcategory":"Gasolina","amount":200.0,"desc":"Gasolina Para Ir A Recoger A Elia A Xalapa (Casa De Angeles)"},{"id":"9rqk2qhbl","date":"2025-05-26","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Consulta Médica","subcategory":"Especialista","amount":80.0,"desc":"Gasolina Para Llevar A Consulta Podologo"},{"id":"iozb2jxyc","date":"2025-06-01","member":"Omar","type":"income","paymentSource":"BBVA Omar","category":"Transferencia","subcategory":"Mercado Pago","amount":8000.0,"desc":"Transferencia Mercado Pago (Omar)"},{"id":"29v8ovc8i","date":"2025-06-02","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":93.97,"desc":"Gelasimi Forte"},{"id":"xrafz8q4f","date":"2025-06-02","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":112.0,"desc":"Escitalopram10Mg"},{"id":"ht3krra7u","date":"2025-06-02","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":105.76,"desc":"Caramelos Y Graneodin"},{"id":"fvu84wln1","date":"2025-06-04","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":2850.65,"desc":"Parches Exelon (1Caja)"},{"id":"xzta6mjev","date":"2025-06-05","member":"Omar","type":"income","paymentSource":"BBVA Omar","category":"Transferencia","subcategory":"Mercado Pago","amount":1850.0,"desc":"Transferencia Mercado Pago (Omar)"},{"id":"ilnua9lad","date":"2025-06-05","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Trámites","subcategory":"Documentos","amount":1175.0,"desc":"Pago Pasaporte"},{"id":"ivuhkz7ne","date":"2025-06-05","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Transporte","subcategory":"Gasolina","amount":300.0,"desc":"Gasolina Por Traslado A Xalapa Y Regreso A Coatepec"},{"id":"w37ruace0","date":"2025-06-18","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Higiene Personal","subcategory":"Aseo","amount":140.0,"desc":"Papel Higienico 12R"},{"id":"0220f6ofr","date":"2025-06-23","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":46.5,"desc":"Diclofenaco"},{"id":"xm4cfca1o","date":"2025-06-24","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":44.0,"desc":"Loratadina"},{"id":"f90ye0yd1","date":"2025-06-26","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":5781.6,"desc":"Parches Exelon (2Cajas)"},{"id":"83ypbzc3q","date":"2025-06-26","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Encargos","subcategory":"Encargo Omar","amount":300.0,"desc":"Encargo Omar: Café"},{"id":"ux36qzwcr","date":"2025-06-26","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Transporte","subcategory":"Gasolina","amount":100.0,"desc":"Gasolina Para Llevar A Peluquero"},{"id":"lb2fnejeu","date":"2025-06-27","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Encargos","subcategory":"Encargo Omar","amount":95.0,"desc":"Encargo Omar: Marimbas"},{"id":"9fi0jowll","date":"2025-06-30","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":224.0,"desc":"Escitalopram10Mg (2 Cajas)"},{"id":"m8e90d37l","date":"2025-07-01","member":"Omar","type":"income","paymentSource":"BBVA Omar","category":"Transferencia","subcategory":"Mercado Pago","amount":8000.0,"desc":"Transferencia Mercado Pago (Omar)"},{"id":"2hbse6jgz","date":"2025-09-01","member":"Omar","type":"income","paymentSource":"BBVA Omar","category":"Transferencia","subcategory":"Mercado Pago","amount":5000.0,"desc":"Transferencia Mercado Pago (Omar)"},{"id":"gjtfku85a","date":"2025-09-03","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Higiene Personal","subcategory":"Aseo","amount":59.0,"desc":"Papel Higienico"},{"id":"btc5jcm42","date":"2025-09-06","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":1650.0,"desc":"Inscripcion Y Mens Sept Alberca"},{"id":"vptkj1z51","date":"2025-09-12","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":2850.65,"desc":"Parches Exelon (1Caja)"},{"id":"396x7mzrz","date":"2025-09-22","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":30.0,"desc":"Pasta Dental"},{"id":"izz5gk8dv","date":"2025-09-22","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Higiene Personal","subcategory":"Aseo","amount":62.5,"desc":"Jabon De Cuerpo"},{"id":"ar30abxr6","date":"2025-09-22","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Higiene Personal","subcategory":"Aseo","amount":59.0,"desc":"Papel Higienico (6 Rollos)"},{"id":"4dn61riqu","date":"2025-10-01","member":"Omar","type":"income","paymentSource":"BBVA Omar","category":"Transferencia","subcategory":"Mercado Pago","amount":5000.0,"desc":"Transferencia Mercado Pago (Omar)"},{"id":"lqjhz8j7s","date":"2025-10-16","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":77.5,"desc":"Crema Para Cuerpo"},{"id":"rnwulw48x","date":"2025-10-20","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Higiene Personal","subcategory":"Aseo","amount":140.0,"desc":"Papel Higienico"},{"id":"prye6axdo","date":"2025-10-28","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":169.0,"desc":"Escitalopram"},{"id":"tn0bq2h2s","date":"2025-10-28","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":112.0,"desc":"Memantina"},{"id":"ydtbca0c6","date":"2025-11-03","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":2850.65,"desc":"Parches Exelon (1Caja)"},{"id":"vlsfmsdrx","date":"2025-11-03","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Consulta Médica","subcategory":"Especialista","amount":200.0,"desc":"Gasolina Ida A Consulta Neuropsicologo En Xalapa"},{"id":"50tesgduv","date":"2025-11-04","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":1500.0,"desc":"1Er Pago A Neuropsicologo"},{"id":"m9r9n4eif","date":"2025-11-05","member":"Omar","type":"income","paymentSource":"BBVA Omar","category":"Transferencia","subcategory":"Mercado Pago","amount":4000.0,"desc":"Transferencia Mercado Pago (Omar)"},{"id":"5nacc7471","date":"2025-11-10","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Consulta Médica","subcategory":"Especialista","amount":200.0,"desc":"Gasolina Ida A Consulta Neuropsicologo En Xalapa"},{"id":"31i5epath","date":"2025-11-24","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":140.0,"desc":"Paq, De Papel Baño"},{"id":"8zpjimqvj","date":"2025-11-24","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":169.0,"desc":"Memantina"},{"id":"x8qkg7hpn","date":"2025-11-28","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":4000.0,"desc":"2Do Pago A Neuropsicologo"},{"id":"er5u1oa0i","date":"2025-12-01","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":112.0,"desc":"Escitalopram"},{"id":"usgxh7syg","date":"2025-12-03","member":"Omar","type":"income","paymentSource":"BBVA Omar","category":"Transferencia","subcategory":"Mercado Pago","amount":5000.0,"desc":"Transferencia Mercado Pago (Omar)"},{"id":"sd6ivb8go","date":"2025-12-06","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":2833.0,"desc":"Laboratorio"},{"id":"kcl5nzt6i","date":"2025-12-08","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Consulta Médica","subcategory":"Especialista","amount":200.0,"desc":"Gasolina Ida A Consulta Neuropsicologo En Xalapa"},{"id":"mu5vo4xw6","date":"2025-12-08","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":475.0,"desc":"Bebida Boost"},{"id":"rforvjoof","date":"2025-12-15","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":3117.65,"desc":"Parches Exelon (1Caja)"},{"id":"grvpknq1c","date":"2025-12-22","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":112.0,"desc":"Escitalopram"},{"id":"mo0np6ote","date":"2025-12-22","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":338.0,"desc":"Memantina"},{"id":"cikxoab4t","date":"2026-01-06","member":"Omar","type":"income","paymentSource":"BBVA Omar","category":"Transferencia","subcategory":"Mercado Pago","amount":5000.0,"desc":"Transferencia Mercado Pago (Omar)"},{"id":"dt5yk9c9h","date":"2026-01-06","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":140.0,"desc":"Paq, De Papel Baño"},{"id":"fas4kp3wg","date":"2026-01-19","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":112.0,"desc":"Escitalopram"},{"id":"9p071k5wg","date":"2026-01-19","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":169.0,"desc":"Memantina"},{"id":"e85infpim","date":"2026-01-19","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":141.0,"desc":"Examen General De Orina"},{"id":"36e5ql2ic","date":"2026-01-26","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":3117.65,"desc":"Parches Exelon (1Caja)"},{"id":"wr0vaqhdc","date":"2026-01-28","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":141.0,"desc":"Examen General De Orina"},{"id":"2wbi33cwq","date":"2026-02-02","member":"Omar","type":"income","paymentSource":"BBVA Omar","category":"Transferencia","subcategory":"Mercado Pago","amount":5000.0,"desc":"Transferencia Bbva Elia"},{"id":"jhs9ljnse","date":"2026-02-02","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":41.0,"desc":"Pasta Dental"},{"id":"gu0uqtigu","date":"2026-02-02","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":169.0,"desc":"Memantina"},{"id":"qtu79odz5","date":"2026-02-05","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":630.0,"desc":"Paq. De Calzon - Pañal (3)"},{"id":"b06swc0d3","date":"2026-02-14","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Higiene Personal","subcategory":"Aseo","amount":35.0,"desc":"Desodorante"},{"id":"4jxovy3mf","date":"2026-02-23","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":169.0,"desc":"Memantina"},{"id":"9d96uzgfr","date":"2026-02-23","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":20.5,"desc":"Pintura De Zapatos"},{"id":"wz70lbc7t","date":"2026-02-24","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Consulta Médica","subcategory":"Especialista","amount":250.0,"desc":"Consulta Con Medico General"},{"id":"3dp6rkdb9","date":"2026-02-24","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Consulta Médica","subcategory":"Especialista","amount":100.0,"desc":"Gasolina Ida A Consulta Medica"},{"id":"wtekdgifp","date":"2026-02-26","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":141.0,"desc":"Examen General De Orina"},{"id":"xd5j4edej","date":"2026-03-05","member":"Omar","type":"income","paymentSource":"BBVA Omar","category":"Transferencia","subcategory":"Mercado Pago","amount":5000.0,"desc":"Transferencia Bbva Elia"},{"id":"79igjs8ik","date":"2026-03-02","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":112.0,"desc":"Escitalopram"},{"id":"k62ru8mz8","date":"2026-03-05","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Consulta Médica","subcategory":"Especialista","amount":800.0,"desc":"Consulta Con Neurologo"},{"id":"xeswygtko","date":"2026-03-05","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Transporte","subcategory":"Gasolina","amount":200.0,"desc":"Gasolina Ida A Xalapa Y Regreso A Coatepec"},{"id":"ifru2r8j8","date":"2026-03-08","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Transporte","subcategory":"Gasolina","amount":190.0,"desc":"Café Y Gasolina Ida A Xalapa A Concierto De Sandra"},{"id":"dmoobh514","date":"2026-03-09","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":86.0,"desc":"Crema Corporal"},{"id":"zg04qgqon","date":"2026-03-09","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":425.25,"desc":"Quetiapina, Etoricoxib, Aspirina Protec"},{"id":"k0h1pgvbi","date":"2026-03-11","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":2850.65,"desc":"Parches Exelon (1Caja)"},{"id":"c98857gfr","date":"2026-03-16","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":224.25,"desc":"Memantina"},{"id":"j00st76br","date":"2026-03-18","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":269.0,"desc":"Quetiapina 25Mg"},{"id":"k2wjploy5","date":"2026-03-18","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":1750.0,"desc":"Vortioxetina 10Mg"},{"id":"onbr5s5lq","date":"2026-03-21","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":192.0,"desc":"Consulta Con Medico En Farmacias Y Gotas Hipromelosa"},{"id":"ccgn6nrxg","date":"2026-03-21","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":100.0,"desc":"Gasolina Ida A Consulta Medico En Farmacias Del Ahorro"},{"id":"631zmfjaq","date":"2026-03-26","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":630.0,"desc":"Paq. De Calzon - Pañal (3)"},{"id":"tt7ikvfi5","date":"2026-03-27","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Consulta Médica","subcategory":"Especialista","amount":1100.0,"desc":"Consulta Con Neurologo Y Pago Taxis Ida A Xalapa Y Regreso A Coatepec"},{"id":"2r4pfi84e","date":"2026-04-06","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":69.0,"desc":"Aspirina Protec"},{"id":"smpkmc98b","date":"2026-04-14","member":"Omar","type":"income","paymentSource":"BBVA Omar","category":"Transferencia","subcategory":"Mercado Pago","amount":3700.0,"desc":"Transferencia Bbva Elia"},{"id":"epxt0pnwb","date":"2026-04-15","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Consulta Médica","subcategory":"Especialista","amount":1325.0,"desc":"Pago En Transferencia A Miguel De Tac Realizado A Elia El 22/03/2026"},{"id":"q0u1mhoh6","date":"2026-04-17","member":"Omar","type":"income","paymentSource":"BBVA Omar","category":"Transferencia","subcategory":"Mercado Pago","amount":4800.0,"desc":"Transferencia Bbva Elia"},{"id":"9tevvi2pw","date":"2026-04-17","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":2923.2,"desc":"Parches Exelon (1Caja)"},{"id":"y9q4zcgpy","date":"2026-04-21","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":269.0,"desc":"Quetiapina 25Mg"},{"id":"ciuqmei2z","date":"2026-04-17","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Medicamentos","subcategory":"Recetados","amount":299.0,"desc":"Memantina 20 Mg"},{"id":"ndhxb8kk1","date":"2026-04-22","member":"Omar","type":"expense","paymentSource":"BBVA Omar","category":"Otros","subcategory":"Misceláneos","amount":1750.32,"desc":"Vortioxetina 10Mg"}];
 }
 
 function uid() { return Math.random().toString(36).substr(2,9); }
@@ -996,11 +981,13 @@ function getFiltered(overrides = {}) {
   const member = overrides.member !== undefined ? overrides.member : (state.currentMember || '');
   const type = overrides.type !== undefined ? overrides.type : '';
   const period = overrides.period || '';
+  const monthKey = overrides.monthKey || '';
   const now = new Date();
   return state.transactions.filter(t => {
     if (member && t.member !== member) return false;
     if (type && t.type !== type) return false;
-    if (period) {
+    if (monthKey && getMonthKey(t.date) !== monthKey) return false;
+    if (period && period !== 'all') {
       const d = new Date(t.date);
       if (period === 'week') {
         const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay());
@@ -1016,9 +1003,21 @@ function getFiltered(overrides = {}) {
 }
 
 // ==================== DASHBOARD ====================
+function populateDashMonthFilter() {
+  const months = [...new Set(state.transactions.map(t => getMonthKey(t.date)))].sort().reverse();
+  const sel = document.getElementById('dashMonthFilter');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Todos los meses</option>' +
+    months.map(m => { const [y,mo] = m.split('-'); return `<option value="${m}" ${m===cur?'selected':''}>${MESES_FULL[parseInt(mo)-1]} ${y}</option>`; }).join('');
+}
+
 function renderDashboard() {
   const period = document.getElementById('dashPeriod').value;
-  const txs = getFiltered({ period, member: state.currentMember || '' });
+  const monthKey = document.getElementById('dashMonthFilter').value;
+  // If a specific month is selected, ignore the period filter
+  const txs = monthKey
+    ? getFiltered({ monthKey, member: state.currentMember || '' })
+    : getFiltered({ period, member: state.currentMember || '' });
   const income = txs.filter(t => t.type === 'income').reduce((s,t) => s+t.amount, 0);
   const expense = txs.filter(t => t.type === 'expense').reduce((s,t) => s+t.amount, 0);
   const balance = income - expense;
@@ -1220,6 +1219,99 @@ function populateFilters() {
     months.map(m => { const [y,mo] = m.split('-'); return `<option value="${m}">${MESES_FULL[parseInt(mo)-1]} ${y}</option>`; }).join('');
   const cats = [...new Set(state.transactions.map(t => t.category))];
   document.getElementById('filterCat').innerHTML = '<option value="">Todas las categorías</option>' + cats.map(c=>`<option value="${c}">${c}</option>`).join('');
+}
+
+// ==================== PASTE FROM SPREADSHEET ====================
+async function parsePastedData() {
+  const raw = document.getElementById('pasteArea').value.trim();
+  const preview = document.getElementById('pastePreview');
+  if (!raw) { preview.textContent = 'No hay datos para importar.'; return; }
+
+  const lines = raw.split('\n').filter(l => l.trim());
+  const imported = [];
+
+  for (const line of lines) {
+    const cols = line.split('\t').map(c => c.trim());
+    if (cols.length < 2) continue;
+
+    // Try to parse date from first column
+    let dateStr = '';
+    const rawDate = cols[0];
+    // Support DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD
+    const d1 = rawDate.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+    const d2 = rawDate.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})$/);
+    if (d2) {
+      dateStr = rawDate.replace(/\//g,'-');
+    } else if (d1) {
+      const [,a,b,c] = d1;
+      const yr = c.length===2 ? '20'+c : c;
+      // Assume DD/MM/YYYY
+      dateStr = `${yr}-${b.padStart(2,'0')}-${a.padStart(2,'0')}`;
+    } else {
+      // Try JS date parse
+      const dt = new Date(rawDate);
+      if (!isNaN(dt)) dateStr = dt.toISOString().split('T')[0];
+    }
+    if (!dateStr) continue;
+
+    // Concept (col 1)
+    const desc = cols[1] || '';
+
+    // Amount: look for numeric value in cols 2, 3, 4
+    let amount = 0;
+    let type = 'expense';
+    for (let i = 2; i < Math.min(cols.length, 6); i++) {
+      const val = parseFloat(cols[i].replace(/[$,\s]/g,''));
+      if (!isNaN(val) && val !== 0) {
+        amount = Math.abs(val);
+        // If column header hints income (col 2=ingreso)
+        if (i === 2 && val > 0 && cols.length > 3) type = 'income';
+        break;
+      }
+    }
+    if (amount === 0) continue;
+
+    // Auto-categorize
+    const c = desc.toUpperCase();
+    let category = 'Otros', subcategory = 'Misceláneos';
+    if (/ESCITALOPRAM|PARCHES|MEMANTINA|GELASIMI|LORATADINA|DICLOFENACO|MEDICAM|FARMACIA|QUETIAPINA|VORTIOXETINA|ASPIRINA/.test(c))
+      { category='Medicamentos'; subcategory='Recetados'; type='expense'; }
+    else if (/GASOLINA|TRASLADO|TAXI|UBER/.test(c))
+      { category='Transporte'; subcategory='Gasolina'; type='expense'; }
+    else if (/CONSULTA|NEUROLOGO|PODOLOGO|MEDICO|NEUROPSI|TAC|ELECTRO|ULTRASONIDO/.test(c))
+      { category='Consulta Médica'; subcategory='Especialista'; type='expense'; }
+    else if (/JABON|DESODORANTE|PAPEL HIGIENICO|HIGIENE|SHAMPOO/.test(c))
+      { category='Higiene Personal'; subcategory='Aseo'; type='expense'; }
+    else if (/TRANSFERENCIA|MERCADO PAGO|BBVA/.test(c))
+      { category='Transferencia'; subcategory='Mercado Pago'; type='income'; }
+    else if (/PASAPORTE|DOCTOS|DOCUMENTO/.test(c))
+      { category='Trámites'; subcategory='Documentos'; type='expense'; }
+    else if (/ENCARGO/.test(c))
+      { category='Encargos'; subcategory='Encargo Omar'; type='expense'; }
+
+    imported.push({
+      id: uid(), date: dateStr,
+      member: state.members[0] || 'Omar',
+      type, paymentSource: state.paymentSources[0] || 'BBVA Omar',
+      category, subcategory, amount,
+      desc: desc.charAt(0).toUpperCase() + desc.slice(1).toLowerCase()
+    });
+  }
+
+  if (!imported.length) { preview.textContent = '⚠️ No se pudieron interpretar los datos. Verifica el formato.'; return; }
+
+  preview.textContent = `✓ ${imported.length} transacciones listas para importar...`;
+
+  // Save all to Firebase
+  for (const tx of imported) {
+    if (window._fbSaveTransaction) await window._fbSaveTransaction(tx);
+    state.transactions.push(tx);
+  }
+  state.transactions.sort((a,b) => b.date.localeCompare(a.date));
+  document.getElementById('pasteArea').value = '';
+  preview.textContent = `✅ ${imported.length} transacciones importadas correctamente.`;
+  renderAll();
+  showToast(`${imported.length} transacciones importadas ✓`);
 }
 
 // ==================== CHARTS TAB ====================
@@ -1548,6 +1640,7 @@ function renderAll() {
   renderMemberSelectors();
   renderPaymentSourceSelect();
   populateFilters();
+  populateDashMonthFilter();
   renderDashboard();
   renderTransactions();
   populateYearFilter();
