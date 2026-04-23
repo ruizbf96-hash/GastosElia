@@ -5,70 +5,56 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Control de Gastos — Elia</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script type="module">
-// ==================== FIREBASE ====================
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import {
-  getFirestore, doc, getDoc, setDoc, collection,
-  addDoc, getDocs, deleteDoc, query, orderBy
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-
+<!-- Firebase compat (funciona con doble clic, sin servidor) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+// ==================== FIREBASE COMPAT ====================
 const firebaseConfig = {
   apiKey: "AIzaSyAI1LJ4w5B23knDWB0c_M2QC3xwxX_qAOg",
   authDomain: "gastos-elia.firebaseapp.com",
   projectId: "gastos-elia",
   storageBucket: "gastos-elia.firebasestorage.app",
   messagingSenderId: "1047223330489",
-  appId: "1:1047223330489:web:7c7fde9791484f6cbf5d68",
-  measurementId: "G-TZFVZBWY27"
+  appId: "1:1047223330489:web:7c7fde9791484f6cbf5d68"
 };
 
-const fireApp = initializeApp(firebaseConfig);
-const db = getFirestore(fireApp);
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
 
-// ---- helpers ----
-async function fbSaveConfig() {
-  await setDoc(doc(db, 'config', 'main'), {
+window._fbSaveConfig = async function() {
+  await db.collection('config').doc('main').set({
     members: state.members,
     paymentSources: state.paymentSources,
     categories: state.categories
   });
-}
+};
 
-async function fbLoadConfig() {
-  const snap = await getDoc(doc(db, 'config', 'main'));
-  if (snap.exists()) {
+window._fbLoadConfig = async function() {
+  const snap = await db.collection('config').doc('main').get();
+  if (snap.exists) {
     const d = snap.data();
-    state.members = d.members || ['Omar','Elia'];
+    state.members        = d.members        || ['Omar','Elia'];
     state.paymentSources = d.paymentSources || [...DEFAULT_PAYMENT_SOURCES];
-    state.categories = d.categories || JSON.parse(JSON.stringify(DEFAULT_CATEGORIES));
+    state.categories     = d.categories     || JSON.parse(JSON.stringify(DEFAULT_CATEGORIES));
   }
-}
+};
 
-async function fbSaveTransaction(tx) {
+window._fbSaveTransaction = async function(tx) {
   const { id, ...data } = tx;
-  await setDoc(doc(db, 'transactions', id), data);
-}
+  await db.collection('transactions').doc(id).set(data);
+};
 
-async function fbDeleteTransaction(id) {
-  await deleteDoc(doc(db, 'transactions', id));
-}
+window._fbDeleteTransaction = async function(id) {
+  await db.collection('transactions').doc(id).delete();
+};
 
-async function fbLoadTransactions() {
-  const q = query(collection(db, 'transactions'), orderBy('date', 'desc'));
-  const snap = await getDocs(q);
+window._fbLoadTransactions = async function() {
+  const snap = await db.collection('transactions').orderBy('date','desc').get();
   state.transactions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-}
+};
 
-// ---- override save/load/delete to use Firebase ----
-window._fbSaveConfig    = fbSaveConfig;
-window._fbLoadConfig    = fbLoadConfig;
-window._fbSaveTransaction  = fbSaveTransaction;
-window._fbDeleteTransaction = fbDeleteTransaction;
-window._fbLoadTransactions = fbLoadTransactions;
 window._firebaseReady = true;
-
-// trigger init after firebase module loads
 if (window._appInitFn) window._appInitFn();
 </script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
