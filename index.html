@@ -473,6 +473,37 @@ if (window._appInitFn) window._appInitFn();
     header { padding: 0 1rem; }
     .header-right .btn-add-member span { display: none; }
   }
+  /* EDITABLE TABLE CELLS */
+  .edit-cell {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.85rem;
+    padding: 0.3rem 0.5rem;
+    width: 100%;
+    outline: none;
+    transition: all 0.15s;
+    cursor: pointer;
+  }
+  .edit-cell:hover { border-color: var(--border); background: var(--surface2); }
+  .edit-cell:focus { border-color: var(--accent); background: var(--surface2); cursor: text; }
+  .edit-cell option { background: var(--surface2); }
+  .amount-input { color: var(--accent2); font-weight: 600; max-width: 100px; }
+  .btn-save {
+    background: rgba(78,203,141,0.15);
+    border: 1px solid var(--green);
+    color: var(--green);
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    transition: all 0.15s;
+  }
+  .btn-save:hover { background: rgba(78,203,141,0.3); }
+  .tx-row td { vertical-align: middle; padding: 0.5rem 0.6rem; }
+
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -1104,21 +1135,79 @@ function renderTransactions() {
   });
   const tbody = document.getElementById('txTableBody');
   if (!txs.length) { tbody.innerHTML = `<tr><td colspan="9" class="no-data">No se encontraron transacciones</td></tr>`; return; }
-  tbody.innerHTML = txs.map(t => `
-    <tr>
-      <td>${formatDate(t.date)}</td>
-      <td>${t.member}</td>
-      <td><span class="badge badge-${t.type}">${t.type==='income'?'Pago':'Gasto'}</span></td>
-      <td style="color:var(--muted);font-size:0.82rem">${t.paymentSource||'—'}</td>
-      <td>${t.category}</td>
-      <td>${t.subcategory||'—'}</td>
-      <td style="color:var(--muted)">${t.desc||'—'}</td>
-      <td class="amount-${t.type}">${t.type==='income'?'+':'−'}${fmt(t.amount)}</td>
-      <td><button class="btn-delete" onclick="deleteTransaction('${t.id}')">✕</button></td>
-    </tr>`).join('');
+
+  // Build select options helpers
+  const memberOpts = state.members.map(m => `<option value="${m}">${m}</option>`).join('');
+  const payOpts = state.paymentSources.map(s => `<option value="${s}">${s}</option>`).join('');
+
+  tbody.innerHTML = txs.map(t => {
+    const expCats = Object.keys(state.categories.expense);
+    const incCats = Object.keys(state.categories.income);
+    const catOpts = (t.type==='expense' ? expCats : incCats).map(c => `<option value="${c}" ${c===t.category?'selected':''}>${c}</option>`).join('');
+    const subOpts = (state.categories[t.type][t.category]||[]).map(s => `<option value="${s}" ${s===t.subcategory?'selected':''}>${s}</option>`).join('');
+    const typeOpts = `<option value="expense" ${t.type==='expense'?'selected':''}>Gasto</option><option value="income" ${t.type==='income'?'selected':''}>Pago</option>`;
+
+    return `<tr id="row-${t.id}" class="tx-row ${t.editMode?'editing':''}">
+      <td><input class="edit-cell" type="date" value="${t.date}" onchange="editField('${t.id}','date',this.value)"></td>
+      <td><select class="edit-cell" onchange="editField('${t.id}','member',this.value)">${state.members.map(m=>`<option value="${m}" ${m===t.member?'selected':''}>${m}</option>`).join('')}</select></td>
+      <td><select class="edit-cell" onchange="editTypeField('${t.id}',this.value)">${typeOpts}</select></td>
+      <td><select class="edit-cell" onchange="editField('${t.id}','paymentSource',this.value)">${state.paymentSources.map(s=>`<option value="${s}" ${s===t.paymentSource?'selected':''}>${s}</option>`).join('')}</select></td>
+      <td><select class="edit-cell" id="cat-${t.id}" onchange="editCatField('${t.id}',this.value)">${catOpts}</select></td>
+      <td><select class="edit-cell" id="sub-${t.id}" onchange="editField('${t.id}','subcategory',this.value)">${subOpts}</select></td>
+      <td><input class="edit-cell" type="text" value="${t.desc||''}" placeholder="—" onchange="editField('${t.id}','desc',this.value)"></td>
+      <td><input class="edit-cell amount-input" type="number" value="${t.amount}" min="0" step="0.01" onchange="editField('${t.id}','amount',parseFloat(this.value))"></td>
+      <td style="display:flex;gap:0.3rem;align-items:center;">
+        <button class="btn-save" onclick="saveTransaction('${t.id}')" title="Guardar">💾</button>
+        <button class="btn-delete" onclick="deleteTransaction('${t.id}')" title="Eliminar">✕</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function editField(id, field, value) {
+  const tx = state.transactions.find(t => t.id === id);
+  if (!tx) return;
+  tx[field] = value;
+  tx._dirty = true;
+}
+
+function editTypeField(id, newType) {
+  const tx = state.transactions.find(t => t.id === id);
+  if (!tx) return;
+  tx.type = newType;
+  tx._dirty = true;
+  // Update category options
+  const catSel = document.getElementById('cat-' + id);
+  const cats = Object.keys(state.categories[newType]);
+  catSel.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('');
+  tx.category = cats[0] || '';
+  editCatField(id, tx.category);
+}
+
+function editCatField(id, newCat) {
+  const tx = state.transactions.find(t => t.id === id);
+  if (!tx) return;
+  tx.category = newCat;
+  tx._dirty = true;
+  // Update subcategory options
+  const subSel = document.getElementById('sub-' + id);
+  const subs = state.categories[tx.type][newCat] || [];
+  subSel.innerHTML = subs.map(s => `<option value="${s}">${s}</option>`).join('');
+  tx.subcategory = subs[0] || '';
+}
+
+async function saveTransaction(id) {
+  const tx = state.transactions.find(t => t.id === id);
+  if (!tx) return;
+  delete tx._dirty;
+  if (window._fbSaveTransaction) await window._fbSaveTransaction(tx);
+  state.transactions.sort((a,b) => b.date.localeCompare(a.date));
+  renderAll();
+  showToast('Transacción actualizada ✓');
 }
 
 async function deleteTransaction(id) {
+  if (!confirm('¿Eliminar esta transacción?')) return;
   if (window._fbDeleteTransaction) await window._fbDeleteTransaction(id);
   state.transactions = state.transactions.filter(t => t.id !== id);
   renderAll();
