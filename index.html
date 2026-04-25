@@ -570,6 +570,9 @@ function getFiltered(overrides = {}) {
   const monthKey = overrides.monthKey || '';
   const now = new Date();
   return state.transactions.filter(t => {
+    // Normalize legacy types
+    if (t.type === 'income') t.type = 'ingreso';
+    if (t.type === 'expense') t.type = 'egreso';
     if (member && t.member !== member) return false;
     if (type && t.type !== type) return false;
     if (monthKey && getMonthKey(t.date) !== monthKey) return false;
@@ -799,11 +802,16 @@ function renderTransactions() {
   const tbody = document.getElementById('txTableBody');
   if (!txs.length) { tbody.innerHTML = `<tr><td colspan="9" class="no-data">No se encontraron transacciones</td></tr>`; return; }
   tbody.innerHTML = txs.map(t => {
+    // Normalize legacy type values
+    if (t.type === 'income') t.type = 'ingreso';
+    if (t.type === 'expense') t.type = 'egreso';
+    const typeKey = (t.type === 'ingreso' || t.type === 'egreso') ? t.type : 'egreso';
     const expCats = Object.keys(state.categories.egreso);
     const incCats = Object.keys(state.categories.ingreso);
-    const catOpts = (t.type==='egreso' ? expCats : incCats).map(c=>`<option value="${c}" ${c===t.category?'selected':''}>${c}</option>`).join('');
-    const subOpts = (state.categories[t.type][t.category]||[]).map(s=>`<option value="${s}" ${s===t.subcategory?'selected':''}>${s}</option>`).join('');
-    const typeOpts = `<option value="egreso" ${t.type==='egreso'?'selected':''}>Egreso</option><option value="ingreso" ${t.type==='ingreso'?'selected':''}>Ingreso</option>`;
+    const catOpts = (typeKey==='egreso' ? expCats : incCats).map(c=>`<option value="${c}" ${c===t.category?'selected':''}>${c}</option>`).join('');
+    const catCats = state.categories[typeKey] || {};
+    const subOpts = (catCats[t.category]||[]).map(s=>`<option value="${s}" ${s===t.subcategory?'selected':''}>${s}</option>`).join('');
+    const typeOpts = `<option value="egreso" ${typeKey==='egreso'?'selected':''}>Egreso</option><option value="ingreso" ${typeKey==='ingreso'?'selected':''}>Ingreso</option>`;
     return `<tr id="row-${t.id}" class="tx-row">
       <td><input class="edit-cell" type="date" value="${t.date}" onchange="editField('${t.id}','date',this.value)"></td>
       <td><select class="edit-cell" onchange="editField('${t.id}','member',this.value)">${state.members.map(m=>`<option value="${m}" ${m===t.member?'selected':''}>${m}</option>`).join('')}</select></td>
