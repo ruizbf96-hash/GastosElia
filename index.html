@@ -28,7 +28,30 @@ window._fbLoadConfig = async function() {
     state.members = d.members || ['Omar','Elia','Miguel'];
     state.paymentSources = d.paymentSources || [...DEFAULT_PAYMENT_SOURCES];
     state.categories = d.categories || JSON.parse(JSON.stringify(DEFAULT_CATEGORIES));
+    // Migrate old keys income→ingreso, expense→egreso
+    if (state.categories.income && !state.categories.ingreso) {
+      state.categories.ingreso = state.categories.income;
+      delete state.categories.income;
+    }
+    if (state.categories.expense && !state.categories.egreso) {
+      state.categories.egreso = state.categories.expense;
+      delete state.categories.expense;
+    }
+    if (!state.categories.ingreso) state.categories.ingreso = JSON.parse(JSON.stringify(DEFAULT_CATEGORIES.ingreso));
+    if (!state.categories.egreso) state.categories.egreso = JSON.parse(JSON.stringify(DEFAULT_CATEGORIES.egreso));
   }
+};
+window._fbMigrateTransactions = async function() {
+  // Migrate old type values income→ingreso, expense→egreso in memory and Firestore
+  let migrated = 0;
+  for (const tx of state.transactions) {
+    if (tx.type === 'income' || tx.type === 'expense') {
+      tx.type = tx.type === 'income' ? 'ingreso' : 'egreso';
+      if (window._fbSaveTransaction) await window._fbSaveTransaction(tx);
+      migrated++;
+    }
+  }
+  if (migrated > 0) console.log(`Migrated ${migrated} transactions to new type names`);
 };
 window._fbSaveTransaction = async function(tx) { const { id, ...data } = tx; await db.collection('transactions').doc(id).set(data); };
 window._fbDeleteTransaction = async function(id) { await db.collection('transactions').doc(id).delete(); };
@@ -489,6 +512,7 @@ async function load() {
   setLoading('Cargando transacciones...', 60);
   if (window._fbLoadTransactions) {
     await window._fbLoadTransactions();
+    if (window._fbMigrateTransactions) await window._fbMigrateTransactions();
     if (state.transactions.length === 0) generateDemoData();
   }
   setLoading('Listo', 100);
