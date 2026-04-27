@@ -442,6 +442,16 @@ tbody td{padding:0.75rem 1rem;font-size:0.88rem;}
       <div style="font-size:1rem;font-weight:600;color:var(--accent2);margin-bottom:0.8rem;">⚠️ Zona peligrosa</div>
       <p style="font-size:0.82rem;color:var(--muted);margin-bottom:1rem;">Elimina TODOS los datos. No se puede deshacer.</p>
       <button class="btn-danger" onclick="clearAllData()">Eliminar todos los datos</button>
+      <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);">
+        <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.8rem;">🔧 Migración: cambiar el miembro de todas las transacciones a una persona específica.</p>
+        <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;">
+          <select id="migrateMemberTarget" class="filter-select" style="font-size:0.85rem;">
+            <!-- populated by JS -->
+          </select>
+          <button class="btn-sm" onclick="migrateAllToMember()" style="padding:0.5rem 1rem;font-size:0.85rem;">Asignar todas las transacciones a esta persona</button>
+          <span id="migrateStatus" style="font-size:0.78rem;color:var(--green);"></span>
+        </div>
+      </div>
     </div>
   </div>
 </main>
@@ -1078,8 +1088,26 @@ function renderMembersConfig() {
     <div class="cat-item-actions">
       <button class="btn-danger" style="padding:0.2rem 0.5rem;font-size:0.75rem" onclick="removeMember(${i})">✕</button>
     </div></div>`).join('');
+  const sel = document.getElementById('migrateMemberTarget');
+  if (sel) sel.innerHTML = state.members.map(m=>`<option value="${m}">${m}</option>`).join('');
 }
-async function removeMember(i) {
+async function migrateAllToMember() {
+  const target = document.getElementById('migrateMemberTarget').value;
+  if (!target) { showToast('Selecciona una persona', true); return; }
+  if (!confirm(`¿Cambiar el miembro de TODAS las transacciones (${state.transactions.length}) a "${target}"? No se puede deshacer.`)) return;
+  const status = document.getElementById('migrateStatus');
+  status.textContent = 'Migrando...';
+  let count = 0;
+  for (const tx of state.transactions) {
+    tx.member = target;
+    if (window._fbSaveTransaction) await window._fbSaveTransaction(tx);
+    count++;
+    if (count % 10 === 0) status.textContent = `Migrando... ${count}/${state.transactions.length}`;
+  }
+  status.textContent = `✅ ${count} transacciones asignadas a "${target}"`;
+  renderAll();
+  showToast(`Todas las transacciones asignadas a ${target} ✓`);
+}
   if (!confirm(`¿Eliminar a "${state.members[i]}"?`)) return;
   if (state.currentMember === state.members[i]) state.currentMember = null;
   state.members.splice(i,1);
