@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expediente de Salud — Residencia MENASHO</title>
+<meta name="theme-color" content="#0f1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Expediente MENASHO">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyAI1LJ4w5B23knDWB0c_M2QC3xwxX_qAOg",
+  authDomain: "gastos-elia.firebaseapp.com",
+  projectId: "gastos-elia",
+  storageBucket: "gastos-elia.firebasestorage.app",
+  messagingSenderId: "1047223330489",
+  appId: "1:1047223330489:web:7c7fde9791484f6cbf5d68"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+// Colecciones separadas del módulo de gastos
+window._fbSaveEntry = async function(e) { const { id, ...d } = e; await db.collection('salud_estado').doc(id).set(d); };
+window._fbDeleteEntry = async function(id) { await db.collection('salud_estado').doc(id).delete(); };
+window._fbLoadEntries = async function() { const s = await db.collection('salud_estado').orderBy('date','desc').get(); state.entries = s.docs.map(d => ({ id: d.id, ...d.data() })); };
+window._fbSaveConsulta = async function(c) { const { id, ...d } = c; await db.collection('salud_consultas').doc(id).set(d); };
+window._fbDeleteConsulta = async function(id) { await db.collection('salud_consultas').doc(id).delete(); };
+window._fbLoadConsultas = async function() { const s = await db.collection('salud_consultas').orderBy('date','desc').get(); state.consultas = s.docs.map(d => ({ id: d.id, ...d.data() })); };
+window._fbSaveMed = async function(m) { const { id, ...d } = m; await db.collection('salud_medicacion').doc(id).set(d); };
+window._fbDeleteMed = async function(id) { await db.collection('salud_medicacion').doc(id).delete(); };
+window._fbLoadMeds = async function() { const s = await db.collection('salud_medicacion').get(); state.meds = s.docs.map(d => ({ id: d.id, ...d.data() })); };
+// Carga gastos médicos del módulo de gastos (para cruce ánimo vs gasto)
+window._fbLoadGastosMedicos = async function() {
+  try {
+    const s = await db.collection('transactions').get();
+    state.gastos = s.docs.map(d => ({ id: d.id, ...d.data() }))
+      .filter(t => (t.type === 'egreso' || t.type === 'expense') && ['Medicamentos','Consulta Médica','Estudios'].includes(t.category));
+  } catch(e) { state.gastos = []; }
+};
+window._fbLoadMembers = async function() {
+  const snap = await db.collection('config').doc('main').get();
+  if (snap.exists) { const d = snap.data(); state.members = (d.members && d.members.length) ? d.members : ['Elia']; }
+};
+window._firebaseReady = true;
+if (window._appInitFn) window._appInitFn();
+</script>
+<script>
+// ============================================================
+//  MENASHO — Módulo de autenticación por PIN (compartido)
+//  Roles: owner (total) · admin (editar) · lectura (solo ver)
+//  Incluir en index.html, gastos.html y expediente.html
+//  Requiere que firebase ya esté inicializado y exista `db`.
+// ============================================================
+(function () {
+  // Hash simple (SHA-256) del PIN — evita guardar el PIN en texto plano
+  async function hashPin(pin) {
+    const data = new TextEncoder().encode('menasho_salt_' + pin);
+    const buf = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  // PINs por defecto al sembrar la primera vez (CÁMBIALOS desde el panel)
+  const DEFAULT_PINS = { owner: '198400', admin: '123456', lectura: '000000' };
+
+  const ROLE_LABELS = { owner: 'Acceso total', admin: 'Administrador', lectura: 'Solo lectura' };
+
+  // ── Sesión (dura mientras la pestaña esté abierta) ──
+  function getRole() { return sessionStorage.getItem('menasho_role') || null; }
+  function setRole(r) { sessionStorage.setItem('menasho_role', r); }
+  function clearRole() { sessionStorage.removeItem('menasho_role'); }
+  function isOwner() { return getRole() === 'owner'; }
+  function isAdmin() { return getRole() === 'owner' || getRole() === 'admin'; }
+  function canEdit() { return isAdmin(); }
+  function isLectura() { return getRole() === 'lectura'; }
+
+  // ── Carga o siembra los hashes de PIN en Firebase ──
+  async function loadPinConfig() {
+    const ref = db.collection('config').doc('auth');
+    const snap = await ref.get();
+    if (snap.exists && snap.data().pins) return snap.data().pins;
+    // Sembrar por defecto (hasheados)
+    const pins = {};
+    for (const [role, pin] of Object.entries(DEFAULT_PINS)) pins[role] = await hashPin(pin);
+    await ref.set({ pins, seededAt: new Date().toISOString() });
+    return pins;
+  }
+
+  // ── Verifica un PIN ingresado y devuelve el rol (o null) ──
+  async function verifyPin(pin) {
+    const pins = await loadPinConfig();
+    const h = await hashPin(pin);
+    for (const role of ['owner', 'admin', 'lectura']) {
+      if (pins[role] === h) return role;
+    }
+    return null;
+  }
+
+  // ── Cambiar un PIN (solo owner) ──
+  async function changePin(role, newPin) {
+    if (!isOwner()) throw new Error('Solo el acceso total puede cambiar PINs');
+    if (!/^\d{6}$/.test(newPin)) throw new Error('El PIN debe ser de 6 dígitos');
+    const ref = db.collection('config').doc('auth');
+    const snap = await ref.get();
+    const pins = (snap.exists && snap.data().pins) ? snap.data().pins : {};
+    pins[role] = await hashPin(newPin);
+    await ref.set({ pins }, { merge: true });
+  }
+
+  // ── Pantalla de PIN (overlay). onSuccess(role) al validar ──
+  function showPinGate(onSuccess, opts = {}) {
+    const allowed = opts.allowedRoles || ['owner', 'admin', 'lectura'];
+    const ov = document.createElement('div');
+    ov.id = 'pinGate';
+    ov.style.cssText = 'position:fixed;inset:0;background:radial-gradient(900px 500px at 50% -10%,#1a2030,#0f1117 60%);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.2rem;font-family:DM Sans,sans-serif;';
+    ov.innerHTML = `
+      <div style="font-family:'DM Serif Display',serif;font-size:1.6rem;color:#6c8fff;">Residencia <span style="color:#ff7c6e">MENASHO</span></div>
+      <div style="font-size:0.9rem;color:#7a839c;">Introduce tu PIN de acceso</div>
+      <div id="pinDots" style="display:flex;gap:0.6rem;margin:0.4rem 0;"></div>
+      <div id="pinPad" style="display:grid;grid-template-columns:repeat(3,64px);gap:0.7rem;"></div>
+      <div id="pinError" style="font-size:0.82rem;color:#ff7c6e;height:18px;"></div>
+    `;
+    document.body.appendChild(ov);
+
+    let pin = '';
+    const dots = ov.querySelector('#pinDots');
+    const pad = ov.querySelector('#pinPad');
+    const err = ov.querySelector('#pinError');
+
+    function renderDots() {
+      dots.innerHTML = Array.from({ length: 6 }).map((_, i) =>
+        `<div style="width:14px;height:14px;border-radius:50%;border:2px solid ${i < pin.length ? '#6c8fff' : '#2a2f45'};background:${i < pin.length ? '#6c8fff' : 'transparent'};transition:all .15s;"></div>`).join('');
+    }
+    renderDots();
+
+    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
+    pad.innerHTML = keys.map(k => k === ''
+      ? `<div></div>`
+      : `<button data-k="${k}" style="width:64px;height:64px;border-radius:50%;border:1px solid #2a2f45;background:#181b24;color:#e8eaf0;font-size:1.4rem;cursor:pointer;transition:all .15s;">${k}</button>`).join('');
+
+    pad.querySelectorAll('button').forEach(b => {
+      b.onmouseenter = () => b.style.borderColor = '#6c8fff';
+      b.onmouseleave = () => b.style.borderColor = '#2a2f45';
+      b.onclick = async () => {
+        const k = b.dataset.k;
+        err.textContent = '';
+        if (k === '⌫') { pin = pin.slice(0, -1); renderDots(); return; }
+        if (pin.length >= 6) return;
+        pin += k;
+        renderDots();
+        if (pin.length === 6) {
+          err.textContent = 'Verificando...';
+          err.style.color = '#7a839c';
+          const role = await verifyPin(pin);
+          if (role && allowed.includes(role)) {
+            setRole(role);
+            ov.style.opacity = '0'; ov.style.transition = 'opacity .35s';
+            setTimeout(() => { ov.remove(); onSuccess(role); }, 350);
+          } else if (role && !allowed.includes(role)) {
+            err.style.color = '#ff7c6e'; err.textContent = 'Este acceso no tiene permiso aquí.';
+            pin = ''; renderDots();
+          } else {
+            err.style.color = '#ff7c6e'; err.textContent = 'PIN incorrecto.';
+            pin = ''; renderDots();
+          }
+        }
+      };
+    });
+
+    // Soporte de teclado físico
+    ov._keyHandler = async (e) => {
+      if (/^\d$/.test(e.key) && pin.length < 6) { pin += e.key; renderDots(); if (pin.length === 6) pad.querySelector('button[data-k]').click.call({ dataset: {} }); }
+      if (e.key === 'Backspace') { pin = pin.slice(0, -1); renderDots(); }
+    };
+  }
+
+  // ── API pública ──
+  window.MenashoAuth = {
+    getRole, setRole, clearRole, isOwner, isAdmin, canEdit, isLectura,
+    verifyPin, changePin, showPinGate, loadPinConfig, ROLE_LABELS,
+    // Helper: exige sesión; si no hay, muestra el gate
+    requireAuth(onReady, opts) {
+      if (getRole()) { onReady(getRole()); return; }
+      showPinGate(onReady, opts);
+    },
+    logout() { clearRole(); location.reload(); }
+  };
+})();
+
+</script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0f1117;--surface:#181b24;--surface2:#1f2333;--border:#2a2f45;--accent:#a78bfa;--accent2:#ff7c6e;--green:#4ecb8d;--yellow:#f5c542;--blue:#6c8fff;--text:#e8eaf0;--muted:#7a839c;--radius:14px;}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{font-size:15px;scroll-behavior:smooth;}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 2rem;display:flex;align-items:center;justify-content:space-between;height:60px;position:sticky;top:0;z-index:100;}
+.logo{font-family:'DM Serif Display',serif;font-size:1.4rem;color:var(--accent);letter-spacing:-0.5px;text-decoration:none;}
+.logo span{color:var(--accent2);}
+.header-right{display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;}
+.person-tabs{display:flex;gap:0.3rem;align-items:center;flex-wrap:wrap;}
+.person-tab{background:var(--surface2);border:1px solid var(--border);color:var(--muted);padding:0.35rem 0.9rem;border-radius:20px;font-size:0.8rem;cursor:pointer;transition:all 0.2s;white-space:nowrap;}
+.person-tab:hover{border-color:var(--accent);color:var(--text);}
+.person-tab.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;}
+.nav-tabs{display:flex;gap:0.2rem;padding:1rem 2rem 0;border-bottom:1px solid var(--border);background:var(--surface);flex-wrap:wrap;}
+.tab-btn{background:none;border:none;color:var(--muted);padding:0.6rem 1.2rem;border-radius:8px 8px 0 0;font-size:0.88rem;cursor:pointer;transition:all 0.2s;border-bottom:2px solid transparent;}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent);background:var(--bg);}
+.tab-btn:hover:not(.active){color:var(--text);background:var(--surface2);}
+main{padding:1.5rem 2rem;max-width:1200px;margin:0 auto;}
+.tab-content{display:none;}.tab-content.active{display:block;}
+.section-title{font-family:'DM Serif Display',serif;font-size:1.2rem;margin-bottom:1rem;color:var(--text);display:flex;align-items:center;gap:0.5rem;}
+.section-title .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;margin-bottom:1.5rem;}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;}
+.kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.2rem 1.4rem;position:relative;overflow:hidden;}
+.kpi-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--accent);}
+.kpi-label{font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:0.5rem;}
+.kpi-value{font-family:'DM Serif Display',serif;font-size:1.8rem;}
+.kpi-sub{font-size:0.75rem;color:var(--muted);margin-top:0.3rem;}
+.scale-group{margin-bottom:1.3rem;}
+.scale-label{display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;}
+.scale-label .name{font-size:0.9rem;font-weight:500;}
+.scale-label .val{font-size:0.85rem;color:var(--accent);font-weight:600;}
+.scale-faces{display:flex;gap:0.5rem;}
+.face-btn{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:0.6rem 0;font-size:1.5rem;cursor:pointer;transition:all 0.15s;text-align:center;}
+.face-btn:hover{border-color:var(--accent);transform:translateY(-2px);}
+.face-btn.selected{background:rgba(167,139,250,0.18);border-color:var(--accent);transform:scale(1.05);}
+.form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1rem;}
+.form-group{display:flex;flex-direction:column;gap:0.4rem;margin-bottom:1rem;}
+.form-group.span2{grid-column:span 2;}
+.form-group label{font-size:0.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.6px;}
+.form-group input,.form-group select,.form-group textarea{background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:0.6rem 0.9rem;font-family:'DM Sans',sans-serif;font-size:0.9rem;outline:none;width:100%;}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--accent);}
+.form-group textarea{resize:vertical;min-height:70px;}
+.form-actions{display:flex;gap:0.8rem;margin-top:0.5rem;justify-content:flex-end;}
+.btn-primary{background:var(--accent);color:white;border:none;padding:0.65rem 1.8rem;border-radius:8px;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:0.9rem;font-weight:500;transition:all 0.2s;}
+.btn-primary:hover{background:#b89dfb;transform:translateY(-1px);}
+.btn-secondary{background:transparent;color:var(--muted);border:1px solid var(--border);padding:0.65rem 1.4rem;border-radius:8px;cursor:pointer;font-size:0.9rem;}
+.btn-secondary:hover{border-color:var(--muted);color:var(--text);}
+.btn-danger{background:rgba(255,124,110,0.15);color:var(--accent2);border:1px solid var(--accent2);padding:0.35rem 0.7rem;border-radius:6px;cursor:pointer;font-size:0.78rem;}
+.btn-danger:hover{background:rgba(255,124,110,0.3);}
+.btn-sm{background:rgba(167,139,250,0.15);color:var(--accent);border:1px solid var(--accent);padding:0.3rem 0.7rem;border-radius:6px;cursor:pointer;font-size:0.78rem;}
+.chart-container{position:relative;height:300px;}
+body.readonly .form-actions,body.readonly .btn-danger,body.readonly .btn-sm,body.readonly .face-btn{display:none !important;}
+body.readonly textarea,body.readonly input,body.readonly select{pointer-events:none;opacity:0.7;}
+body.readonly #tab-registro .card,body.readonly #tab-consultas .card:first-of-type,body.readonly #tab-medicacion .card:first-of-type{display:none;}
+.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-bottom:1.5rem;}
+@media(max-width:800px){.charts-grid{grid-template-columns:1fr;}}
+table{width:100%;border-collapse:collapse;}
+thead th{background:var(--surface2);padding:0.7rem 1rem;text-align:left;font-size:0.74rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.6px;font-weight:500;border-bottom:1px solid var(--border);}
+tbody tr{border-bottom:1px solid var(--border);}
+tbody tr:last-child{border-bottom:none;}
+tbody td{padding:0.7rem 1rem;font-size:0.88rem;vertical-align:top;}
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
+.no-data{text-align:center;padding:2.5rem 1rem;color:var(--muted);}
+.entry-item{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:1rem 1.2rem;margin-bottom:0.7rem;}
+.entry-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;}
+.entry-date{font-size:0.82rem;color:var(--muted);}
+.entry-scores{display:flex;gap:0.8rem;flex-wrap:wrap;margin:0.4rem 0;}
+.score-chip{font-size:0.78rem;padding:0.2rem 0.6rem;border-radius:20px;background:var(--surface);border:1px solid var(--border);}
+.entry-note{font-size:0.85rem;color:var(--text);margin-top:0.4rem;line-height:1.5;}
+.badge{display:inline-block;padding:0.2rem 0.6rem;border-radius:20px;font-size:0.72rem;font-weight:500;background:rgba(167,139,250,0.15);color:var(--accent);}
+.med-active{border-left:3px solid var(--green);}
+.med-paused{border-left:3px solid var(--muted);opacity:0.7;}
+.toast{position:fixed;bottom:1.5rem;right:1.5rem;background:var(--surface2);border:1px solid var(--green);border-radius:10px;padding:0.75rem 1.2rem;font-size:0.85rem;color:var(--green);z-index:300;transform:translateY(100px);opacity:0;transition:all 0.3s ease;}
+.toast.show{transform:translateY(0);opacity:1;}
+.toast.error{border-color:var(--accent2);color:var(--accent2);}
+.disclaimer{background:rgba(245,197,66,0.08);border:1px solid rgba(245,197,66,0.3);border-radius:10px;padding:0.8rem 1rem;font-size:0.8rem;color:var(--muted);margin-bottom:1.2rem;line-height:1.5;}
+@media(max-width:800px){.kpi-grid{grid-template-columns:repeat(2,1fr);}.form-grid{grid-template-columns:1fr;}main{padding:1rem;}header{padding:0 1rem;}}
+::-webkit-scrollbar{width:6px;height:6px;}::-webkit-scrollbar-track{background:var(--bg);}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
+</style>
+</head>
+<body>
+<header>
+  <a href="index.html" class="logo" title="Volver al inicio">← Expediente <span>Salud MENASHO</span></a>
+  <div class="header-right">
+    <div class="person-tabs" id="personTabs"></div>
+  </div>
+</header>
+
+<div class="nav-tabs">
+  <button class="tab-btn active" onclick="switchTab('resumen')">📊 Resumen</button>
+  <button class="tab-btn" onclick="switchTab('registro')">📝 Registrar estado</button>
+  <button class="tab-btn" onclick="switchTab('historial')">📅 Historial</button>
+  <button class="tab-btn" onclick="switchTab('consultas')">🩺 Consultas</button>
+  <button class="tab-btn" onclick="switchTab('medicacion')">💊 Medicación</button>
+</div>
+
+<main>
+  <!-- RESUMEN -->
+  <div class="tab-content active" id="tab-resumen">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <div class="section-title" style="margin:0"><span class="dot"></span>Resumen de salud — <span id="resumenPersona" style="color:var(--accent)"></span></div>
+      <button class="btn-primary" onclick="downloadExpedientePDF()" style="padding:0.55rem 1.2rem;font-size:0.85rem;">📄 Descargar expediente PDF</button>
+    </div>
+    <div class="disclaimer">⚠️ Esta herramienta es un apoyo de seguimiento para cuidadores. No sustituye el diagnóstico ni el criterio de profesionales de la salud. Ante cualquier cambio importante, consulta al médico tratante.</div>
+    <div class="kpi-grid" id="resumenKpis"></div>
+
+    <div class="charts-grid">
+      <div class="card">
+        <div class="section-title" style="font-size:0.95rem"><span class="dot"></span>Perfil general por área</div>
+        <div class="chart-container" style="height:280px"><canvas id="chartRadar"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="section-title" style="font-size:0.95rem"><span class="dot" style="background:var(--green)"></span>Promedio por área (7 registros)</div>
+        <div class="chart-container" style="height:280px"><canvas id="chartBarras"></canvas></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title" style="font-size:1rem"><span class="dot"></span>Evolución combinada del estado</div>
+      <div class="chart-container"><canvas id="chartEvolucion"></canvas></div>
+    </div>
+
+    <div class="section-title" style="font-size:1rem"><span class="dot" style="background:var(--blue)"></span>Evolución por área individual</div>
+    <div class="charts-grid" id="areaChartsGrid"></div>
+
+    <div class="kpi-grid" id="diasKpis" style="margin-top:0.5rem"></div>
+
+    <div class="section-title" style="font-size:1rem;margin-top:0.5rem"><span class="dot" style="background:var(--yellow)"></span>Mapa de calor del ánimo (últimas 12 semanas)</div>
+    <div class="card" id="heatmapCard">
+      <div style="overflow-x:auto"><div id="heatmapGrid"></div></div>
+      <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.8rem;font-size:0.72rem;color:var(--muted);">
+        <span>Bajo</span>
+        <span style="display:inline-block;width:16px;height:12px;background:#c62828;border-radius:2px;"></span>
+        <span style="display:inline-block;width:16px;height:12px;background:#f5c542;border-radius:2px;"></span>
+        <span style="display:inline-block;width:16px;height:12px;background:#4ecb8d;border-radius:2px;"></span>
+        <span>Alto</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title" style="font-size:1rem"><span class="dot" style="background:var(--accent2)"></span>Ánimo vs cambios de medicación</div>
+      <p style="font-size:0.78rem;color:var(--muted);margin-bottom:0.8rem;">Las líneas verticales marcan el inicio de un medicamento. Ayuda a ver si un ajuste coincidió con cambios de ánimo.</p>
+      <div class="chart-container"><canvas id="chartMedCorr"></canvas></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title" style="font-size:1rem"><span class="dot" style="background:var(--green)"></span>Gasto médico vs estado de ánimo (por mes)</div>
+      <p style="font-size:0.78rem;color:var(--muted);margin-bottom:0.8rem;">Cruza los gastos médicos del módulo de Gastos con el ánimo promedio del mes.</p>
+      <div class="chart-container"><canvas id="chartGastoAnimo"></canvas></div>
+    </div>
+
+    <div class="card" id="resumenInsight" style="border-left:3px solid var(--accent);">
+      <div style="font-size:0.85rem;font-weight:600;margin-bottom:0.5rem;">🧠 Lectura rápida</div>
+      <div id="insightText" style="font-size:0.88rem;color:var(--muted);line-height:1.6;"></div>
+    </div>
+  </div>
+
+  <!-- REGISTRAR ESTADO -->
+  <div class="tab-content" id="tab-registro">
+    <div class="section-title"><span class="dot"></span>¿Cómo está hoy?</div>
+    <div class="card">
+      <div class="form-group">
+        <label>Fecha</label>
+        <input type="date" id="entryDate" style="max-width:200px;">
+      </div>
+      <div id="scalesContainer"></div>
+      <div class="form-group span2">
+        <label>Notas / observaciones del día</label>
+        <textarea id="entryNote" placeholder="Comportamiento, eventos, cambios notables..."></textarea>
+      </div>
+      <div class="form-actions">
+        <button class="btn-secondary" onclick="clearEntryForm()">Limpiar</button>
+        <button class="btn-primary" onclick="saveEntry()">Guardar registro</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- HISTORIAL -->
+  <div class="tab-content" id="tab-historial">
+    <div class="section-title"><span class="dot"></span>Historial de registros</div>
+    <div id="historialList"></div>
+  </div>
+
+  <!-- CONSULTAS -->
+  <div class="tab-content" id="tab-consultas">
+    <div class="section-title"><span class="dot"></span>Consultas médicas</div>
+    <div class="card">
+      <div class="form-grid">
+        <div class="form-group"><label>Fecha</label><input type="date" id="consultaDate"></div>
+        <div class="form-group"><label>Especialista / Médico</label><input type="text" id="consultaDoctor" placeholder="Ej. Neurólogo"></div>
+        <div class="form-group span2"><label>Motivo / Diagnóstico</label><input type="text" id="consultaDiag" placeholder="Motivo de la consulta o diagnóstico"></div>
+        <div class="form-group span2"><label>Indicaciones</label><textarea id="consultaIndic" placeholder="Indicaciones, cambios de medicación, próximos pasos..."></textarea></div>
+      </div>
+      <div class="form-actions">
+        <button class="btn-primary" onclick="saveConsulta()">Guardar consulta</button>
+      </div>
+    </div>
+    <div class="table-wrap" id="consultasTable"></div>
+  </div>
+
+  <!-- MEDICACIÓN -->
+  <div class="tab-content" id="tab-medicacion">
+    <div class="section-title"><span class="dot"></span>Medicación activa</div>
+    <div class="card">
+      <div class="form-grid">
+        <div class="form-group"><label>Medicamento</label><input type="text" id="medName" placeholder="Ej. Memantina"></div>
+        <div class="form-group"><label>Dosis</label><input type="text" id="medDose" placeholder="Ej. 20 mg / día"></div>
+        <div class="form-group"><label>Frecuencia</label><input type="text" id="medFreq" placeholder="Ej. 1 vez al día"></div>
+        <div class="form-group"><label>Desde</label><input type="date" id="medSince"></div>
+        <div class="form-group span2"><label>Notas</label><input type="text" id="medNote" placeholder="Indicaciones, efectos observados..."></div>
+      </div>
+      <div class="form-actions">
+        <button class="btn-primary" onclick="saveMed()">Agregar medicamento</button>
+      </div>
+    </div>
+    <div id="medsList"></div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+<script>
+const MESES_FULL = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+// Escalas de estado: cada una de 1 (mal) a 5 (muy bien) con caritas
+const SCALES = [
+  { key: 'animo',    label: 'Ánimo',           faces: ['😢','😟','😐','🙂','😄'] },
+  { key: 'mental',   label: 'Estado mental / cognitivo', faces: ['😵‍💫','😕','😐','🙂','🧠'] },
+  { key: 'fisico',   label: 'Estado físico',   faces: ['🤕','😣','😐','💪','🤸'] },
+  { key: 'social',   label: 'Interacción social', faces: ['🙍','😶','😐','👥','🥳'] },
+  { key: 'sueno',    label: 'Sueño',           faces: ['😴','😪','😐','🛌','✨'] },
+  { key: 'apetito',  label: 'Apetito',         faces: ['🚫','😬','😐','🍽','😋'] }
+];
+const SCALE_COLORS = { animo:'#a78bfa', mental:'#6c8fff', fisico:'#4ecb8d', social:'#f5c542', sueno:'#38bdf8', apetito:'#ff7c6e' };
+
+let state = {
+  members: ['Elia'],
+  currentMember: 'Elia',
+  entries: [],
+  consultas: [],
+  meds: [],
+  gastos: [],
+  draftScores: {},
+  charts: {}
+};
+
+// ── LOADING ──
+function setLoading(msg) { const e = document.getElementById('loadingMsg'); if (e) e.textContent = msg; }
+function hideLoading() { const o = document.getElementById('loadingOverlay'); if (o) { o.style.opacity='0'; o.style.transition='opacity .4s'; setTimeout(()=>o.remove(),400); } }
+
+async function load() {
+  setLoading('Cargando datos...');
+  if (window._fbLoadMembers) await window._fbLoadMembers();
+  if (window._fbLoadEntries) await window._fbLoadEntries();
+  if (window._fbLoadConsultas) await window._fbLoadConsultas();
+  if (window._fbLoadMeds) await window._fbLoadMeds();
+  if (window._fbLoadGastosMedicos) await window._fbLoadGastosMedicos();
+  if (!state.members.includes(state.currentMember)) state.currentMember = state.members[0] || 'Elia';
+}
+
+// ── PERSON TABS ──
+function renderPersonTabs() {
+  document.getElementById('personTabs').innerHTML = state.members.map(m =>
+    `<button class="person-tab ${state.currentMember===m?'active':''}" onclick="selectPerson('${m}')">${m}</button>`).join('');
+}
+function selectPerson(m) { state.currentMember = m; renderPersonTabs(); renderAll(); }
+
+// ── FILTER por paciente ──
+function memberEntries() { return state.entries.filter(e => e.member === state.currentMember); }
+function memberConsultas() { return state.consultas.filter(c => c.member === state.currentMember); }
+function memberMeds() { return state.meds.filter(m => m.member === state.currentMember); }
+
+// ── REGISTRAR ESTADO ──
+function renderScales() {
+  const cont = document.getElementById('scalesContainer');
+  cont.innerHTML = SCALES.map(s => `
+    <div class="scale-group">
+      <div class="scale-label"><span class="name">${s.label}</span><span class="val" id="val-${s.key}">—</span></div>
+      <div class="scale-faces">
+        ${s.faces.map((f,i) => `<button class="face-btn" id="face-${s.key}-${i+1}" onclick="setScore('${s.key}',${i+1})">${f}</button>`).join('')}
+      </div>
+    </div>`).join('');
+}
+function setScore(key, val) {
+  state.draftScores[key] = val;
+  document.getElementById('val-'+key).textContent = val + '/5';
+  SCALES.find(s=>s.key===key).faces.forEach((_,i) => {
+    document.getElementById(`face-${key}-${i+1}`).classList.toggle('selected', (i+1)===val);
+  });
+}
+function clearEntryForm() {
+  state.draftScores = {};
+  document.getElementById('entryNote').value = '';
+  document.getElementById('entryDate').value = new Date().toISOString().split('T')[0];
+  renderScales();
+}
+async function saveEntry() {
+  const date = document.getElementById('entryDate').value;
+  const note = document.getElementById('entryNote').value.trim();
+  if (!date) { showToast('Indica la fecha', true); return; }
+  if (Object.keys(state.draftScores).length === 0) { showToast('Marca al menos un indicador', true); return; }
+  const entry = { id: uid(), member: state.currentMember, date, scores: {...state.draftScores}, note };
+  if (window._fbSaveEntry) { showToast('Guardando...'); await window._fbSaveEntry(entry); }
+  state.entries.push(entry);
+  state.entries.sort((a,b)=>b.date.localeCompare(a.date));
+  clearEntryForm(); renderAll(); showToast('Registro guardado ✓');
+}
+
+// ── RESUMEN ──
+function renderResumen() {
+  const entries = memberEntries();
+  const personaEl = document.getElementById('resumenPersona');
+  if (personaEl) personaEl.textContent = state.currentMember;
+  const last7 = entries.slice(0, 7);
+  const avgOf = (key, list) => { const vals = list.map(e=>e.scores?.[key]).filter(v=>v!=null); return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null; };
+
+  const kpiKeys = ['animo','mental','fisico','social'];
+  document.getElementById('resumenKpis').innerHTML = kpiKeys.map(k => {
+    const s = SCALES.find(x=>x.key===k);
+    const avg = avgOf(k, last7);
+    const face = avg!=null ? s.faces[Math.min(4, Math.round(avg)-1)] : '—';
+    return `<div class="kpi-card" style="--card-color:${SCALE_COLORS[k]}"><div class="kpi-label">${s.label}</div><div class="kpi-value" style="color:${SCALE_COLORS[k]}">${avg!=null?avg.toFixed(1):'—'} <span style="font-size:1.3rem">${face}</span></div><div class="kpi-sub">Promedio últimos 7 registros</div></div>`;
+  }).join('');
+
+  renderRadarChart();
+  renderBarrasChart();
+  renderEvolucionChart();
+  renderAreaCharts();
+  renderDiasKpis();
+  renderHeatmap();
+  renderMedCorrChart();
+  renderGastoAnimoChart();
+  renderInsight();
+}
+
+function renderRadarChart() {
+  if (state.charts.radar) { state.charts.radar.destroy(); delete state.charts.radar; }
+  const last7 = memberEntries().slice(0, 7);
+  const avgOf = (key) => { const v = last7.map(e=>e.scores?.[key]).filter(x=>x!=null); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : 0; };
+  state.charts.radar = new Chart(document.getElementById('chartRadar'), {
+    type: 'radar',
+    data: {
+      labels: SCALES.map(s=>s.label),
+      datasets: [{
+        label: 'Promedio (7 reg.)',
+        data: SCALES.map(s=>avgOf(s.key)),
+        borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.25)',
+        pointBackgroundColor: SCALES.map(s=>SCALE_COLORS[s.key]), pointRadius: 4, borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { r: { min:0, max:5, ticks:{ stepSize:1, color:'#7a839c', backdropColor:'transparent', font:{size:9} }, grid:{ color:'rgba(42,47,69,0.7)' }, angleLines:{ color:'rgba(42,47,69,0.7)' }, pointLabels:{ color:'#e8eaf0', font:{size:11} } } }
+    }
+  });
+}
+
+function renderBarrasChart() {
+  if (state.charts.barras) { state.charts.barras.destroy(); delete state.charts.barras; }
+  const last7 = memberEntries().slice(0, 7);
+  const avgOf = (key) => { const v = last7.map(e=>e.scores?.[key]).filter(x=>x!=null); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : 0; };
+  state.charts.barras = new Chart(document.getElementById('chartBarras'), {
+    type: 'bar',
+    data: {
+      labels: SCALES.map(s=>s.label),
+      datasets: [{ label:'Promedio', data: SCALES.map(s=>avgOf(s.key)), backgroundColor: SCALES.map(s=>SCALE_COLORS[s.key]+'cc'), borderRadius:6 }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { x: { min:0, max:5, ticks:{ stepSize:1, color:'#7a839c' }, grid:{ color:'rgba(42,47,69,0.5)' } }, y: { ticks:{ color:'#7a839c', font:{size:11} }, grid:{ display:false } } }
+    }
+  });
+}
+
+function renderAreaCharts() {
+  const grid = document.getElementById('areaChartsGrid');
+  const entries = memberEntries().slice(0, 15).slice().reverse();
+  // Destruir gráficos previos por área
+  SCALES.forEach(s => { const id='area_'+s.key; if (state.charts[id]) { state.charts[id].destroy(); delete state.charts[id]; } });
+  if (!entries.length) { grid.innerHTML = `<div class="no-data" style="grid-column:1/-1">Sin datos para mostrar evolución por área.</div>`; return; }
+  grid.innerHTML = SCALES.map(s => `
+    <div class="card" style="margin-bottom:0;border-top:3px solid ${SCALE_COLORS[s.key]}">
+      <div style="font-size:0.88rem;font-weight:600;margin-bottom:0.6rem;">${s.faces[2]} ${s.label}</div>
+      <div style="position:relative;height:160px;"><canvas id="canvas_area_${s.key}"></canvas></div>
+    </div>`).join('');
+  const labels = entries.map(e => formatDateShort(e.date));
+  SCALES.forEach(s => {
+    state.charts['area_'+s.key] = new Chart(document.getElementById('canvas_area_'+s.key), {
+      type: 'line',
+      data: { labels, datasets: [{ data: entries.map(e=>e.scores?.[s.key] ?? null), borderColor: SCALE_COLORS[s.key], backgroundColor: SCALE_COLORS[s.key]+'22', fill:true, tension:0.35, pointRadius:2, spanGaps:true }] },
+      options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} }, scales:{ x:{ ticks:{color:'#7a839c',font:{size:9}}, grid:{display:false} }, y:{ min:0, max:5, ticks:{stepSize:1,color:'#7a839c',font:{size:9}}, grid:{color:'rgba(42,47,69,0.4)'} } } }
+    });
+  });
+}
+
+function renderEvolucionChart() {
+  if (state.charts.evo) { state.charts.evo.destroy(); delete state.charts.evo; }
+  const entries = memberEntries().slice(0, 20).slice().reverse();
+  if (!entries.length) { return; }
+  const labels = entries.map(e => formatDateShort(e.date));
+  const datasets = SCALES.map(s => ({
+    label: s.label,
+    data: entries.map(e => e.scores?.[s.key] ?? null),
+    borderColor: SCALE_COLORS[s.key],
+    backgroundColor: SCALE_COLORS[s.key] + '22',
+    tension: 0.35, pointRadius: 3, spanGaps: true, fill: false
+  }));
+  state.charts.evo = new Chart(document.getElementById('chartEvolucion'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color:'#7a839c', font:{size:11}, boxWidth:12 } } },
+      scales: {
+        x: { ticks:{color:'#7a839c',font:{size:10}}, grid:{color:'rgba(42,47,69,0.5)'} },
+        y: { min:0, max:5, ticks:{color:'#7a839c',stepSize:1}, grid:{color:'rgba(42,47,69,0.5)'} }
+      }
+    }
+  });
+}
+
+// ── KPIs: días buenos vs difíciles (mes actual) ──
+function renderDiasKpis() {
+  const el = document.getElementById('diasKpis');
+  if (!el) return;
+  const now = new Date();
+  const mk = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const monthEntries = memberEntries().filter(e => e.date.startsWith(mk));
+  const animoOf = e => e.scores?.animo;
+  const buenos = monthEntries.filter(e => animoOf(e) >= 4).length;
+  const dificiles = monthEntries.filter(e => animoOf(e) != null && animoOf(e) <= 2).length;
+  const neutros = monthEntries.filter(e => animoOf(e) === 3).length;
+  el.innerHTML = `
+    <div class="kpi-card" style="--card-color:#4ecb8d"><div class="kpi-label">Días buenos (ánimo ≥4)</div><div class="kpi-value" style="color:#4ecb8d">${buenos} 😄</div><div class="kpi-sub">Este mes</div></div>
+    <div class="kpi-card" style="--card-color:#f5c542"><div class="kpi-label">Días neutros</div><div class="kpi-value" style="color:#f5c542">${neutros} 😐</div><div class="kpi-sub">Este mes</div></div>
+    <div class="kpi-card" style="--card-color:#ff7c6e"><div class="kpi-label">Días difíciles (≤2)</div><div class="kpi-value" style="color:#ff7c6e">${dificiles} 😢</div><div class="kpi-sub">Este mes</div></div>
+    <div class="kpi-card" style="--card-color:#a78bfa"><div class="kpi-label">Días registrados</div><div class="kpi-value" style="color:#a78bfa">${monthEntries.length}</div><div class="kpi-sub">Este mes</div></div>`;
+}
+
+// ── Mapa de calor del ánimo (12 semanas) ──
+function renderHeatmap() {
+  const cont = document.getElementById('heatmapGrid');
+  if (!cont) return;
+  const entries = memberEntries();
+  const byDate = {};
+  entries.forEach(e => { if (e.scores?.animo != null) byDate[e.date] = e.scores.animo; });
+  const colorFor = v => v==null ? '#1f2333' : v<=2 ? '#c62828' : v==3 ? '#f5c542' : '#4ecb8d';
+  const dias = ['L','M','X','J','V','S','D'];
+  const today = new Date();
+  // 12 semanas hacia atrás, alineadas a lunes
+  const start = new Date(today); start.setDate(today.getDate() - 7*11 - ((today.getDay()+6)%7));
+  let html = '<div style="display:flex;gap:3px;"><div style="display:flex;flex-direction:column;gap:3px;margin-right:4px;justify-content:space-around;">'+dias.map(d=>`<div style="font-size:0.6rem;color:var(--muted);height:14px;">${d}</div>`).join('')+'</div>';
+  html += '<div style="display:flex;gap:3px;">';
+  for (let w=0; w<12; w++) {
+    html += '<div style="display:flex;flex-direction:column;gap:3px;">';
+    for (let d=0; d<7; d++) {
+      const cur = new Date(start); cur.setDate(start.getDate() + w*7 + d);
+      const key = cur.toISOString().split('T')[0];
+      const v = byDate[key];
+      const title = `${formatDate(key)}${v!=null?': ánimo '+v+'/5':' (sin registro)'}`;
+      html += `<div title="${title}" style="width:14px;height:14px;border-radius:3px;background:${colorFor(v)};"></div>`;
+    }
+    html += '</div>';
+  }
+  html += '</div></div>';
+  cont.innerHTML = html;
+}
+
+// ── Ánimo vs cambios de medicación (líneas verticales en inicios de med) ──
+function renderMedCorrChart() {
+  if (state.charts.medcorr) { state.charts.medcorr.destroy(); delete state.charts.medcorr; }
+  const entries = memberEntries().slice(0, 30).slice().reverse();
+  if (!entries.length) return;
+  const labels = entries.map(e => formatDateShort(e.date));
+  // Fechas de inicio de medicación (dentro del rango visible)
+  const medStarts = memberMeds().filter(m => m.since).map(m => ({ since: m.since, name: m.name }));
+  const annotations = [];
+  entries.forEach((e, i) => {
+    medStarts.forEach(ms => { if (ms.since === e.date) annotations.push({ idx: i, name: ms.name }); });
+  });
+  const animoData = entries.map(e => e.scores?.animo ?? null);
+  state.charts.medcorr = new Chart(document.getElementById('chartMedCorr'), {
+    type: 'line',
+    data: { labels, datasets: [{ label:'Ánimo', data: animoData, borderColor:'#a78bfa', backgroundColor:'rgba(167,139,250,0.15)', fill:true, tension:0.35, pointRadius:3, spanGaps:true }] },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ labels:{color:'#7a839c',font:{size:11}} },
+        tooltip:{ callbacks:{ afterBody: (items)=>{ const i=items[0].dataIndex; const a=annotations.find(x=>x.idx===i); return a?'💊 Inicio: '+a.name:''; } } } },
+      scales:{ x:{ ticks:{color:'#7a839c',font:{size:9}}, grid:{color:'rgba(42,47,69,0.4)'} }, y:{ min:0,max:5,ticks:{stepSize:1,color:'#7a839c'}, grid:{color:'rgba(42,47,69,0.5)'} } }
+    },
+    plugins: [{
+      id: 'medLines',
+      afterDraw: (chart) => {
+        const { ctx, chartArea, scales } = chart;
+        annotations.forEach(a => {
+          const x = scales.x.getPixelForValue(a.idx);
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255,124,110,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([4,3]);
+          ctx.beginPath(); ctx.moveTo(x, chartArea.top); ctx.lineTo(x, chartArea.bottom); ctx.stroke();
+          ctx.fillStyle = '#ff7c6e'; ctx.font = '9px DM Sans'; ctx.textAlign='center';
+          ctx.fillText('💊', x, chartArea.top + 8);
+          ctx.restore();
+        });
+      }
+    }]
+  });
+}
+
+// ── Gasto médico vs ánimo promedio (por mes) ──
+function renderGastoAnimoChart() {
+  if (state.charts.gastoanimo) { state.charts.gastoanimo.destroy(); delete state.charts.gastoanimo; }
+  // Meses presentes en entradas o gastos
+  const entries = memberEntries();
+  const gastos = (state.gastos || []);
+  const monthsSet = new Set();
+  entries.forEach(e => monthsSet.add(e.date.slice(0,7)));
+  gastos.forEach(g => { if (g.date) monthsSet.add(g.date.slice(0,7)); });
+  const months = [...monthsSet].sort().slice(-12);
+  if (!months.length) return;
+  const animoAvg = months.map(mk => {
+    const es = entries.filter(e => e.date.startsWith(mk) && e.scores?.animo!=null);
+    return es.length ? es.reduce((s,e)=>s+e.scores.animo,0)/es.length : null;
+  });
+  const gastoMes = months.map(mk => gastos.filter(g => g.date && g.date.startsWith(mk)).reduce((s,g)=>s+(g.amount||0),0));
+  const labels = months.map(mk => { const [y,m]=mk.split('-'); return MESES_FULL[parseInt(m)-1].slice(0,3)+" '"+y.slice(2); });
+  state.charts.gastoanimo = new Chart(document.getElementById('chartGastoAnimo'), {
+    data: {
+      labels,
+      datasets: [
+        { type:'bar', label:'Gasto médico ($)', data: gastoMes, backgroundColor:'rgba(78,203,141,0.6)', borderRadius:5, yAxisID:'y' },
+        { type:'line', label:'Ánimo promedio', data: animoAvg, borderColor:'#a78bfa', backgroundColor:'rgba(167,139,250,0.1)', tension:0.35, pointRadius:4, spanGaps:true, yAxisID:'y1' }
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ labels:{color:'#7a839c',font:{size:11}} } },
+      scales:{
+        x:{ ticks:{color:'#7a839c',font:{size:10}}, grid:{color:'rgba(42,47,69,0.4)'} },
+        y:{ position:'left', ticks:{color:'#4ecb8d',font:{size:10}}, grid:{color:'rgba(42,47,69,0.5)'}, title:{display:true,text:'$ gasto',color:'#4ecb8d',font:{size:10}} },
+        y1:{ position:'right', min:0, max:5, ticks:{stepSize:1,color:'#a78bfa',font:{size:10}}, grid:{drawOnChartArea:false}, title:{display:true,text:'ánimo',color:'#a78bfa',font:{size:10}} }
+      }
+    }
+  });
+}
+
+function renderInsight() {
+  const el = document.getElementById('insightText');
+  const entries = memberEntries();
+  if (entries.length < 2) { el.innerHTML = `Registra el estado al menos 2 días para ver una lectura de evolución.`; return; }
+  const recent = entries.slice(0, 7);
+  const older = entries.slice(7, 14);
+  const avgOf = (key, list) => { const v = list.map(e=>e.scores?.[key]).filter(x=>x!=null); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null; };
+  const parts = [];
+  SCALES.forEach(s => {
+    const r = avgOf(s.key, recent), o = avgOf(s.key, older);
+    if (r!=null && o!=null) {
+      const diff = r - o;
+      if (Math.abs(diff) >= 0.6) {
+        const dir = diff > 0 ? `<strong style="color:var(--green)">mejoró</strong>` : `<strong style="color:var(--accent2)">bajó</strong>`;
+        parts.push(`${s.label} ${dir} (${o.toFixed(1)} → ${r.toFixed(1)})`);
+      }
+    }
+  });
+  // último registro con nota
+  const lastWithNote = entries.find(e => e.note);
+  let txt = parts.length ? `Comparado con la semana previa: ${parts.join('; ')}.` : `El estado se mantiene estable respecto a la semana previa.`;
+  if (lastWithNote) txt += ` Última nota (${formatDate(lastWithNote.date)}): "${lastWithNote.note}".`;
+  el.innerHTML = txt;
+}
+
+// ── HISTORIAL ──
+function renderHistorial() {
+  const entries = memberEntries();
+  const cont = document.getElementById('historialList');
+  if (!entries.length) { cont.innerHTML = `<div class="no-data">Aún no hay registros. Ve a "Registrar estado" para añadir el primero.</div>`; return; }
+  cont.innerHTML = entries.map(e => `
+    <div class="entry-item">
+      <div class="entry-head">
+        <span class="entry-date">📅 ${formatDate(e.date)}</span>
+        <button class="btn-danger" onclick="deleteEntry('${e.id}')">✕</button>
+      </div>
+      <div class="entry-scores">
+        ${SCALES.filter(s=>e.scores?.[s.key]!=null).map(s => `<span class="score-chip">${s.faces[e.scores[s.key]-1]} ${s.label}: ${e.scores[s.key]}/5</span>`).join('')}
+      </div>
+      ${e.note ? `<div class="entry-note">📝 ${e.note}</div>` : ''}
+    </div>`).join('');
+}
+async function deleteEntry(id) {
+  if (!confirm('¿Eliminar este registro?')) return;
+  if (window._fbDeleteEntry) await window._fbDeleteEntry(id);
+  state.entries = state.entries.filter(e=>e.id!==id);
+  renderAll(); showToast('Registro eliminado');
+}
+
+// ── CONSULTAS ──
+async function saveConsulta() {
+  const date = document.getElementById('consultaDate').value;
+  const doctor = document.getElementById('consultaDoctor').value.trim();
+  const diag = document.getElementById('consultaDiag').value.trim();
+  const indic = document.getElementById('consultaIndic').value.trim();
+  if (!date || !doctor) { showToast('Indica fecha y médico', true); return; }
+  const c = { id: uid(), member: state.currentMember, date, doctor, diag, indic };
+  if (window._fbSaveConsulta) await window._fbSaveConsulta(c);
+  state.consultas.push(c);
+  state.consultas.sort((a,b)=>b.date.localeCompare(a.date));
+  document.getElementById('consultaDoctor').value=''; document.getElementById('consultaDiag').value=''; document.getElementById('consultaIndic').value='';
+  renderConsultas(); showToast('Consulta guardada ✓');
+}
+function renderConsultas() {
+  const list = memberConsultas();
+  const cont = document.getElementById('consultasTable');
+  if (!list.length) { cont.innerHTML = `<div class="no-data">Sin consultas registradas.</div>`; return; }
+  cont.innerHTML = `<table><thead><tr><th>Fecha</th><th>Médico</th><th>Motivo / Diagnóstico</th><th>Indicaciones</th><th></th></tr></thead><tbody>
+    ${list.map(c => `<tr>
+      <td>${formatDate(c.date)}</td>
+      <td>${c.doctor}</td>
+      <td>${c.diag||'—'}</td>
+      <td style="color:var(--muted)">${c.indic||'—'}</td>
+      <td><button class="btn-danger" onclick="deleteConsulta('${c.id}')">✕</button></td>
+    </tr>`).join('')}
+    </tbody></table>`;
+}
+async function deleteConsulta(id) {
+  if (!confirm('¿Eliminar esta consulta?')) return;
+  if (window._fbDeleteConsulta) await window._fbDeleteConsulta(id);
+  state.consultas = state.consultas.filter(c=>c.id!==id);
+  renderConsultas(); showToast('Consulta eliminada');
+}
+
+// ── MEDICACIÓN ──
+async function saveMed() {
+  const name = document.getElementById('medName').value.trim();
+  const dose = document.getElementById('medDose').value.trim();
+  const freq = document.getElementById('medFreq').value.trim();
+  const since = document.getElementById('medSince').value;
+  const note = document.getElementById('medNote').value.trim();
+  if (!name) { showToast('Indica el medicamento', true); return; }
+  const m = { id: uid(), member: state.currentMember, name, dose, freq, since, note, active: true };
+  if (window._fbSaveMed) await window._fbSaveMed(m);
+  state.meds.push(m);
+  ['medName','medDose','medFreq','medNote'].forEach(i=>document.getElementById(i).value='');
+  renderMeds(); showToast('Medicamento agregado ✓');
+}
+function renderMeds() {
+  const list = memberMeds();
+  const cont = document.getElementById('medsList');
+  if (!list.length) { cont.innerHTML = `<div class="no-data">Sin medicación registrada.</div>`; return; }
+  cont.innerHTML = list.map(m => `
+    <div class="entry-item ${m.active!==false?'med-active':'med-paused'}">
+      <div class="entry-head">
+        <span style="font-weight:600;font-size:1rem">${m.name} ${m.active!==false?'<span class="badge">Activo</span>':'<span class="score-chip">Pausado</span>'}</span>
+        <div style="display:flex;gap:0.4rem;">
+          <button class="btn-sm" onclick="toggleMed('${m.id}')">${m.active!==false?'Pausar':'Reactivar'}</button>
+          <button class="btn-danger" onclick="deleteMed('${m.id}')">✕</button>
+        </div>
+      </div>
+      <div style="font-size:0.85rem;color:var(--muted);line-height:1.6;">
+        ${m.dose?`💊 ${m.dose}`:''} ${m.freq?` · 🕐 ${m.freq}`:''} ${m.since?` · desde ${formatDate(m.since)}`:''}
+        ${m.note?`<br>📝 ${m.note}`:''}
+      </div>
+    </div>`).join('');
+}
+async function toggleMed(id) {
+  const m = state.meds.find(x=>x.id===id); if (!m) return;
+  m.active = m.active===false;
+  if (window._fbSaveMed) await window._fbSaveMed(m);
+  renderMeds(); showToast(m.active?'Reactivado':'Pausado');
+}
+async function deleteMed(id) {
+  if (!confirm('¿Eliminar este medicamento?')) return;
+  if (window._fbDeleteMed) await window._fbDeleteMed(id);
+  state.meds = state.meds.filter(m=>m.id!==id);
+  renderMeds(); showToast('Medicamento eliminado');
+}
+
+// ── DESCARGAR EXPEDIENTE EN PDF ──
+function downloadExpedientePDF() {
+  const m = state.currentMember;
+  const entries = memberEntries();
+  const consultas = memberConsultas();
+  const meds = memberMeds();
+  const last7 = entries.slice(0, 7);
+  const avgOf = (key) => { const v = last7.map(e=>e.scores?.[key]).filter(x=>x!=null); return v.length ? (v.reduce((a,b)=>a+b,0)/v.length) : null; };
+
+  const promedios = SCALES.map(s => { const a = avgOf(s.key); return { label: s.label, avg: a, face: a!=null ? s.faces[Math.min(4,Math.round(a)-1)] : '—' }; });
+
+  const w = window.open('', '_blank');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Expediente ${m}</title>
+    <style>
+      body{font-family:Arial,sans-serif;color:#222;padding:30px;max-width:820px;margin:0 auto;}
+      h1{color:#5b3fa8;font-size:20px;border-bottom:2px solid #5b3fa8;padding-bottom:8px;margin-bottom:4px;}
+      h2{color:#7c5fc0;font-size:15px;margin-top:24px;border-left:3px solid #a78bfa;padding-left:8px;}
+      .sub{color:#666;font-size:13px;margin-bottom:6px;}
+      .grid{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0;}
+      .k{flex:1;min-width:120px;border:1px solid #ddd;border-radius:8px;padding:10px;text-align:center;}
+      .k .l{font-size:11px;color:#888;}
+      .k .v{font-size:18px;font-weight:bold;margin-top:4px;color:#5b3fa8;}
+      table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px;}
+      th{background:#5b3fa8;color:#fff;padding:6px 8px;text-align:left;}
+      td{padding:5px 8px;border-bottom:1px solid #eee;vertical-align:top;}
+      .badge{background:#ede7fb;color:#5b3fa8;padding:2px 8px;border-radius:10px;font-size:11px;}
+      .foot{margin-top:30px;font-size:10px;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:10px;}
+      .note{background:#faf8ff;border:1px solid #ede7fb;border-radius:6px;padding:8px;font-size:11px;color:#555;margin-top:4px;}
+      @media print{body{padding:0;}}
+    </style></head><body>
+    <h1>Gestión Residencia MENASHO — Expediente de Salud</h1>
+    <div class="sub">Paciente: <strong>${m}</strong> · Generado: ${new Date().toLocaleDateString('es-MX')} · Registros: ${entries.length}</div>
+
+    <h2>Estado general (promedio últimos 7 registros)</h2>
+    <div class="grid">
+      ${promedios.map(p => `<div class="k"><div class="l">${p.label}</div><div class="v">${p.avg!=null?p.avg.toFixed(1)+'/5':'—'} ${p.face}</div></div>`).join('')}
+    </div>
+
+    <h2>Medicación activa</h2>
+    ${meds.filter(x=>x.active!==false).length ? `<table><thead><tr><th>Medicamento</th><th>Dosis</th><th>Frecuencia</th><th>Desde</th></tr></thead><tbody>
+      ${meds.filter(x=>x.active!==false).map(x=>`<tr><td><strong>${x.name}</strong></td><td>${x.dose||'—'}</td><td>${x.freq||'—'}</td><td>${x.since?formatDate(x.since):'—'}</td></tr>`).join('')}
+    </tbody></table>` : '<p class="sub">Sin medicación activa registrada.</p>'}
+
+    <h2>Consultas médicas</h2>
+    ${consultas.length ? `<table><thead><tr><th>Fecha</th><th>Médico</th><th>Diagnóstico</th><th>Indicaciones</th></tr></thead><tbody>
+      ${consultas.map(c=>`<tr><td>${formatDate(c.date)}</td><td>${c.doctor}</td><td>${c.diag||'—'}</td><td>${c.indic||'—'}</td></tr>`).join('')}
+    </tbody></table>` : '<p class="sub">Sin consultas registradas.</p>'}
+
+    <h2>Historial de registros de estado</h2>
+    ${entries.length ? `<table><thead><tr><th>Fecha</th>${SCALES.map(s=>`<th>${s.label}</th>`).join('')}<th>Notas</th></tr></thead><tbody>
+      ${entries.slice(0,30).map(e=>`<tr><td>${formatDate(e.date)}</td>${SCALES.map(s=>`<td>${e.scores?.[s.key]!=null?e.scores[s.key]+'/5':'—'}</td>`).join('')}<td>${e.note||''}</td></tr>`).join('')}
+    </tbody></table>` : '<p class="sub">Sin registros de estado.</p>'}
+
+    <div class="foot">Documento generado automáticamente · Gestión de Gastos Residencia MENASHO · Este expediente es un apoyo de seguimiento y no sustituye el criterio médico profesional.</div>
+    </body></html>`);
+  w.document.close();
+  setTimeout(() => w.print(), 500);
+  showToast('Generando PDF...');
+}
+
+// ── UTILS ──
+function formatDate(d) { const x=new Date(d); return `${String(x.getDate()).padStart(2,'0')}/${String(x.getMonth()+1).padStart(2,'0')}/${x.getFullYear()}`; }
+function formatDateShort(d) { const x=new Date(d); return `${String(x.getDate()).padStart(2,'0')}/${String(x.getMonth()+1).padStart(2,'0')}`; }
+function uid() { return Math.random().toString(36).substr(2,9); }
+function showToast(msg, error=false) { const t=document.getElementById('toast'); t.textContent=msg; t.className='toast show'+(error?' error':''); setTimeout(()=>t.className='toast',2600); }
+
+// ── TABS ──
+function switchTab(name) {
+  document.querySelectorAll('.tab-content').forEach(el=>el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el=>el.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  const map = { resumen:'resumen', registro:'registrar', historial:'historial', consultas:'consultas', medicacion:'medicaci' };
+  document.querySelectorAll('.tab-btn').forEach(b=>{ if (b.textContent.toLowerCase().includes(map[name]||name)) b.classList.add('active'); });
+  if (name==='resumen') renderResumen();
+  if (name==='historial') renderHistorial();
+  if (name==='consultas') renderConsultas();
+  if (name==='medicacion') renderMeds();
+}
+
+// ── RENDER ALL ──
+function renderAll() {
+  renderPersonTabs();
+  renderResumen();
+  renderHistorial();
+  renderConsultas();
+  renderMeds();
+}
+
+// ── LOADING OVERLAY ──
+const loadingDiv = document.createElement('div');
+loadingDiv.id = 'loadingOverlay';
+loadingDiv.style.cssText = 'position:fixed;inset:0;background:#0f1117;z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem;';
+loadingDiv.innerHTML = `<div style="font-family:'DM Serif Display',serif;font-size:1.6rem;color:#a78bfa;">Expediente <span style="color:#ff7c6e">Salud MENASHO</span></div>
+<div id="loadingMsg" style="font-size:0.85rem;color:#7a839c;">Conectando...</div>`;
+document.body.appendChild(loadingDiv);
+
+// ── INIT ──
+async function init() {
+  try {
+    await load();
+    document.getElementById('entryDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('consultaDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('medSince').value = new Date().toISOString().split('T')[0];
+    renderScales();
+    renderAll();
+    applyRolePermissions();
+    hideLoading();
+  } catch(e) {
+    console.error(e); setLoading('Error de conexión. Recarga la página.');
+  }
+}
+
+function applyRolePermissions() {
+  const role = (window.MenashoAuth && MenashoAuth.getRole()) || 'owner';
+  const hr = document.querySelector('.header-right');
+  if (hr && !document.getElementById('roleBadge')) {
+    const b = document.createElement('div');
+    b.id = 'roleBadge';
+    b.style.cssText = 'display:flex;align-items:center;gap:0.5rem;font-size:0.75rem;color:var(--muted);';
+    b.innerHTML = '<span>'+(MenashoAuth.ROLE_LABELS[role]||role)+'</span>'+
+      '<button onclick="MenashoAuth.logout()" style="background:var(--surface2);border:1px solid var(--border);color:var(--accent2);border-radius:6px;padding:0.2rem 0.55rem;cursor:pointer;font-size:0.72rem;">Salir</button>';
+    hr.appendChild(b);
+  }
+  if (window.MenashoAuth && MenashoAuth.isLectura()) {
+    document.body.classList.add('readonly');
+    // Lectura: solo Resumen + gráficos (oculta pestañas de registro/edición)
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      const t = btn.textContent.toLowerCase();
+      if (t.includes('registrar')) btn.style.display = 'none';
+    });
+    switchTab('resumen');
+  }
+}
+
+window._appInitFn = init;
+function _bootExp(){
+  if (window.MenashoAuth) { MenashoAuth.requireAuth(function(){ init(); }); }
+  else { init(); }
+}
+if (window._firebaseReady) _bootExp();
+else window._appInitFn = _bootExp;
+</script>
+</body>
+</html>
