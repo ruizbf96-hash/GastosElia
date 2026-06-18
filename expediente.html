@@ -305,7 +305,7 @@ tbody td{padding:0.7rem 1rem;font-size:0.88rem;vertical-align:top;}
         <div class="chart-container" style="height:280px"><canvas id="chartRadar"></canvas></div>
       </div>
       <div class="card">
-        <div class="section-title" style="font-size:0.95rem"><span class="dot" style="background:var(--green)"></span>Promedio por área (7 registros)</div>
+        <div class="section-title" style="font-size:0.95rem"><span class="dot" style="background:var(--green)"></span>Promedio por ítem (7 registros)</div>
         <div class="chart-container" style="height:280px"><canvas id="chartBarras"></canvas></div>
       </div>
     </div>
@@ -315,7 +315,7 @@ tbody td{padding:0.7rem 1rem;font-size:0.88rem;vertical-align:top;}
       <div class="chart-container"><canvas id="chartEvolucion"></canvas></div>
     </div>
 
-    <div class="section-title" style="font-size:1rem"><span class="dot" style="background:var(--blue)"></span>Evolución por área individual</div>
+    <div class="section-title" style="font-size:1rem"><span class="dot" style="background:var(--blue)"></span>Evolución por área de salud</div>
     <div class="charts-grid" id="areaChartsGrid"></div>
 
     <div class="kpi-grid" id="diasKpis" style="margin-top:0.5rem"></div>
@@ -365,7 +365,9 @@ tbody td{padding:0.7rem 1rem;font-size:0.88rem;vertical-align:top;}
       </div>
       <div class="form-actions">
         <button class="btn-secondary" onclick="clearEntryForm()">Limpiar</button>
-        <button class="btn-primary" onclick="saveEntry()">Guardar registro</button>
+        <button class="btn-secondary" onclick="printReporteActual()">🖨 Imprimir reporte</button>
+        <button class="btn-secondary" onclick="generarReportePDF()">📄 Generar PDF</button>
+        <button class="btn-primary" onclick="saveEntry()">💾 Guardar registro</button>
       </div>
     </div>
   </div>
@@ -416,15 +418,60 @@ tbody td{padding:0.7rem 1rem;font-size:0.88rem;vertical-align:top;}
 <script>
 const MESES_FULL = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 // Escalas de estado: cada una de 1 (mal) a 5 (muy bien) con caritas
-const SCALES = [
-  { key: 'animo',    label: 'Ánimo',           faces: ['😢','😟','😐','🙂','😄'] },
-  { key: 'mental',   label: 'Estado mental / cognitivo', faces: ['😵‍💫','😕','😐','🙂','🧠'] },
-  { key: 'fisico',   label: 'Estado físico',   faces: ['🤕','😣','😐','💪','🤸'] },
-  { key: 'social',   label: 'Interacción social', faces: ['🙍','😶','😐','👥','🥳'] },
-  { key: 'sueno',    label: 'Sueño',           faces: ['😴','😪','😐','🛌','✨'] },
-  { key: 'apetito',  label: 'Apetito',         faces: ['🚫','😬','😐','🍽','😋'] }
+// Escala 0-5 con emojis (6 niveles). 5 = más frecuente/alto, 0 = más bajo.
+const SCALE_FACES = ['🚫','😟','😕','😐','🙂','😄'];
+// Estructura del Reporte Mensual de Residente — Residencia MENASHO
+const REPORT_SECTIONS = [
+  { section: 'SALUD FÍSICA', color: '#4ecb8d', groups: [
+    { group: 'Nutricional / Metabólico', items: [
+      { key: 'comidas', label: 'No. de comidas y entremeses' },
+      { key: 'agua', label: 'Toma de agua / día' }
+    ]},
+    { group: 'Eliminación', items: [
+      { key: 'intestinal', label: 'Intestinal' },
+      { key: 'urinaria', label: 'Urinaria' },
+      { key: 'cutanea', label: 'Cutánea' },
+      { key: 'sudor', label: 'Sudor excesivo o anormal' },
+      { key: 'aseo', label: 'Aseo personal' }
+    ]},
+    { group: 'Actividad / Ejercicio', items: [
+      { key: 'actividad_fisica', label: 'Actividades físicas' },
+      { key: 'ejercicio', label: 'Ejercicio, caminar' }
+    ]},
+    { group: 'Sueño / Descanso', items: [
+      { key: 'duerme_noche', label: 'Duerme \u22658 h durante la noche' },
+      { key: 'duerme_dia', label: 'Duerme durante el día' },
+      { key: 'insomnio', label: 'Insomnio' }
+    ]}
+  ]},
+  { section: 'SALUD MENTAL / EMOCIONAL', color: '#a78bfa', groups: [
+    { group: 'Cognitivo / Perceptivo', items: [
+      { key: 'recreativas', label: 'Participa en actividades recreativas' },
+      { key: 'terapia', label: 'Participa en terapia mental' },
+      { key: 'dolor', label: 'Expresa / localiza dolor' }
+    ]},
+    { group: 'Autopercepción / Autoconcepto', items: [
+      { key: 'animo', label: 'Estado de ánimo (alegre, positivo)' },
+      { key: 'relaciones', label: 'Rol de relaciones con otros residentes' },
+      { key: 'apoyo', label: 'Apoyo familiar y amistades' }
+    ]},
+    { group: 'Adaptación / Tolerancia al estrés', items: [
+      { key: 'tenso', label: 'Tenso o irritado' }
+    ]}
+  ]},
+  { section: 'SALUD ESPIRITUAL', color: '#f5c542', groups: [
+    { group: 'Valores / Creencias', items: [
+      { key: 'preocupaciones', label: 'Preocupaciones' },
+      { key: 'espiritual', label: 'Práctica espiritual' }
+    ]}
+  ]}
 ];
-const SCALE_COLORS = { animo:'#a78bfa', mental:'#6c8fff', fisico:'#4ecb8d', social:'#f5c542', sueno:'#38bdf8', apetito:'#ff7c6e' };
+// Lista plana de todos los ítems (para registro y gráficos)
+const SCALES = REPORT_SECTIONS.flatMap(s => s.groups.flatMap(g => g.items.map(it => ({ key: it.key, label: it.label, faces: SCALE_FACES.slice(1), section: s.section, color: s.color }))));
+// KPIs principales del resumen
+const KPI_KEYS = ['animo','actividad_fisica','recreativas','tenso'];
+const SECTION_COLORS = { 'SALUD FÍSICA':'#4ecb8d', 'SALUD MENTAL / EMOCIONAL':'#a78bfa', 'SALUD ESPIRITUAL':'#f5c542' };
+const SCALE_COLORS = Object.fromEntries(SCALES.map(s => [s.key, s.color]));
 
 let state = {
   members: ['Elia'],
@@ -466,19 +513,28 @@ function memberMeds() { return state.meds.filter(m => m.member === state.current
 // ── REGISTRAR ESTADO ──
 function renderScales() {
   const cont = document.getElementById('scalesContainer');
-  cont.innerHTML = SCALES.map(s => `
-    <div class="scale-group">
-      <div class="scale-label"><span class="name">${s.label}</span><span class="val" id="val-${s.key}">—</span></div>
-      <div class="scale-faces">
-        ${s.faces.map((f,i) => `<button class="face-btn" id="face-${s.key}-${i+1}" onclick="setScore('${s.key}',${i+1})">${f}</button>`).join('')}
-      </div>
+  cont.innerHTML = REPORT_SECTIONS.map(sec => `
+    <div style="margin-bottom:1.6rem;">
+      <div style="font-family:'DM Serif Display',serif;font-size:1.05rem;color:${sec.color};border-bottom:1px solid var(--border);padding-bottom:0.4rem;margin-bottom:0.9rem;">${sec.section}</div>
+      ${sec.groups.map(g => `
+        <div style="margin-bottom:1rem;">
+          <div style="font-size:0.8rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.6rem;">${g.group}</div>
+          ${g.items.map(it => `
+            <div class="scale-group" style="margin-bottom:0.9rem;">
+              <div class="scale-label"><span class="name">${it.label}</span><span class="val" id="val-${it.key}">—</span></div>
+              <div class="scale-faces">
+                ${SCALE_FACES.map((f,i) => `<button class="face-btn" id="face-${it.key}-${i}" onclick="setScore('${it.key}',${i})" title="${i}">${f}<div style="font-size:0.6rem;color:var(--muted);margin-top:2px;">${i}</div></button>`).join('')}
+              </div>
+            </div>`).join('')}
+        </div>`).join('')}
     </div>`).join('');
 }
 function setScore(key, val) {
   state.draftScores[key] = val;
   document.getElementById('val-'+key).textContent = val + '/5';
-  SCALES.find(s=>s.key===key).faces.forEach((_,i) => {
-    document.getElementById(`face-${key}-${i+1}`).classList.toggle('selected', (i+1)===val);
+  SCALE_FACES.forEach((_,i) => {
+    const el = document.getElementById(`face-${key}-${i}`);
+    if (el) el.classList.toggle('selected', i===val);
   });
 }
 function clearEntryForm() {
@@ -507,11 +563,12 @@ function renderResumen() {
   const last7 = entries.slice(0, 7);
   const avgOf = (key, list) => { const vals = list.map(e=>e.scores?.[key]).filter(v=>v!=null); return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null; };
 
-  const kpiKeys = ['animo','mental','fisico','social'];
+  const kpiKeys = KPI_KEYS;
   document.getElementById('resumenKpis').innerHTML = kpiKeys.map(k => {
     const s = SCALES.find(x=>x.key===k);
+    if (!s) return '';
     const avg = avgOf(k, last7);
-    const face = avg!=null ? s.faces[Math.min(4, Math.round(avg)-1)] : '—';
+    const face = avg!=null ? SCALE_FACES[Math.round(avg)] : '—';
     return `<div class="kpi-card" style="--card-color:${SCALE_COLORS[k]}"><div class="kpi-label">${s.label}</div><div class="kpi-value" style="color:${SCALE_COLORS[k]}">${avg!=null?avg.toFixed(1):'—'} <span style="font-size:1.3rem">${face}</span></div><div class="kpi-sub">Promedio últimos 7 registros</div></div>`;
   }).join('');
 
@@ -526,25 +583,33 @@ function renderResumen() {
   renderInsight();
 }
 
+// Promedio por sección a partir de una lista de entradas
+function sectionAvg(sectionName, list) {
+  const keys = SCALES.filter(s => s.section === sectionName).map(s => s.key);
+  const vals = [];
+  list.forEach(e => keys.forEach(k => { if (e.scores?.[k] != null) vals.push(e.scores[k]); }));
+  return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
+}
+const SECTION_NAMES = REPORT_SECTIONS.map(s => s.section);
+
 function renderRadarChart() {
   if (state.charts.radar) { state.charts.radar.destroy(); delete state.charts.radar; }
   const last7 = memberEntries().slice(0, 7);
-  const avgOf = (key) => { const v = last7.map(e=>e.scores?.[key]).filter(x=>x!=null); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : 0; };
   state.charts.radar = new Chart(document.getElementById('chartRadar'), {
     type: 'radar',
     data: {
-      labels: SCALES.map(s=>s.label),
+      labels: SECTION_NAMES,
       datasets: [{
         label: 'Promedio (7 reg.)',
-        data: SCALES.map(s=>avgOf(s.key)),
+        data: SECTION_NAMES.map(s=>sectionAvg(s, last7)),
         borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.25)',
-        pointBackgroundColor: SCALES.map(s=>SCALE_COLORS[s.key]), pointRadius: 4, borderWidth: 2
+        pointBackgroundColor: SECTION_NAMES.map(s=>SECTION_COLORS[s]), pointRadius: 5, borderWidth: 2
       }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
-      scales: { r: { min:0, max:5, ticks:{ stepSize:1, color:'#7a839c', backdropColor:'transparent', font:{size:9} }, grid:{ color:'rgba(42,47,69,0.7)' }, angleLines:{ color:'rgba(42,47,69,0.7)' }, pointLabels:{ color:'#e8eaf0', font:{size:11} } } }
+      scales: { r: { min:0, max:5, ticks:{ stepSize:1, color:'#7a839c', backdropColor:'transparent', font:{size:9} }, grid:{ color:'rgba(42,47,69,0.7)' }, angleLines:{ color:'rgba(42,47,69,0.7)' }, pointLabels:{ color:'#e8eaf0', font:{size:10} } } }
     }
   });
 }
@@ -553,16 +618,17 @@ function renderBarrasChart() {
   if (state.charts.barras) { state.charts.barras.destroy(); delete state.charts.barras; }
   const last7 = memberEntries().slice(0, 7);
   const avgOf = (key) => { const v = last7.map(e=>e.scores?.[key]).filter(x=>x!=null); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : 0; };
+  // Barras por ítem individual, coloreadas por sección
   state.charts.barras = new Chart(document.getElementById('chartBarras'), {
     type: 'bar',
     data: {
       labels: SCALES.map(s=>s.label),
-      datasets: [{ label:'Promedio', data: SCALES.map(s=>avgOf(s.key)), backgroundColor: SCALES.map(s=>SCALE_COLORS[s.key]+'cc'), borderRadius:6 }]
+      datasets: [{ label:'Promedio', data: SCALES.map(s=>avgOf(s.key)), backgroundColor: SCALES.map(s=>SCALE_COLORS[s.key]+'cc'), borderRadius:5 }]
     },
     options: {
       indexAxis: 'y', responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
-      scales: { x: { min:0, max:5, ticks:{ stepSize:1, color:'#7a839c' }, grid:{ color:'rgba(42,47,69,0.5)' } }, y: { ticks:{ color:'#7a839c', font:{size:11} }, grid:{ display:false } } }
+      scales: { x: { min:0, max:5, ticks:{ stepSize:1, color:'#7a839c' }, grid:{ color:'rgba(42,47,69,0.5)' } }, y: { ticks:{ color:'#7a839c', font:{size:9} }, grid:{ display:false } } }
     }
   });
 }
@@ -570,22 +636,28 @@ function renderBarrasChart() {
 function renderAreaCharts() {
   const grid = document.getElementById('areaChartsGrid');
   const entries = memberEntries().slice(0, 15).slice().reverse();
-  // Destruir gráficos previos por área
-  SCALES.forEach(s => { const id='area_'+s.key; if (state.charts[id]) { state.charts[id].destroy(); delete state.charts[id]; } });
+  SECTION_NAMES.forEach(s => { const id='area_'+s; if (state.charts[id]) { state.charts[id].destroy(); delete state.charts[id]; } });
   if (!entries.length) { grid.innerHTML = `<div class="no-data" style="grid-column:1/-1">Sin datos para mostrar evolución por área.</div>`; return; }
-  grid.innerHTML = SCALES.map(s => `
-    <div class="card" style="margin-bottom:0;border-top:3px solid ${SCALE_COLORS[s.key]}">
-      <div style="font-size:0.88rem;font-weight:600;margin-bottom:0.6rem;">${s.faces[2]} ${s.label}</div>
-      <div style="position:relative;height:160px;"><canvas id="canvas_area_${s.key}"></canvas></div>
+  grid.innerHTML = REPORT_SECTIONS.map(sec => `
+    <div class="card" style="margin-bottom:0;border-top:3px solid ${sec.color}">
+      <div style="font-size:0.88rem;font-weight:600;margin-bottom:0.6rem;">${sec.section}</div>
+      <div style="position:relative;height:170px;"><canvas id="canvas_area_${sec.section.replace(/[^A-Za-z]/g,'')}"></canvas></div>
     </div>`).join('');
   const labels = entries.map(e => formatDateShort(e.date));
-  SCALES.forEach(s => {
-    state.charts['area_'+s.key] = new Chart(document.getElementById('canvas_area_'+s.key), {
+  REPORT_SECTIONS.forEach(sec => {
+    const cid = 'canvas_area_'+sec.section.replace(/[^A-Za-z]/g,'');
+    state.charts['area_'+sec.section] = new Chart(document.getElementById(cid), {
       type: 'line',
-      data: { labels, datasets: [{ data: entries.map(e=>e.scores?.[s.key] ?? null), borderColor: SCALE_COLORS[s.key], backgroundColor: SCALE_COLORS[s.key]+'22', fill:true, tension:0.35, pointRadius:2, spanGaps:true }] },
+      data: { labels, datasets: [{ data: entries.map(e=>sectionAvgEntry(sec.section, e)), borderColor: sec.color, backgroundColor: sec.color+'22', fill:true, tension:0.35, pointRadius:2, spanGaps:true }] },
       options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} }, scales:{ x:{ ticks:{color:'#7a839c',font:{size:9}}, grid:{display:false} }, y:{ min:0, max:5, ticks:{stepSize:1,color:'#7a839c',font:{size:9}}, grid:{color:'rgba(42,47,69,0.4)'} } } }
     });
   });
+}
+// Promedio de una sección dentro de UNA entrada
+function sectionAvgEntry(sectionName, entry) {
+  const keys = SCALES.filter(s => s.section === sectionName).map(s => s.key);
+  const vals = keys.map(k => entry.scores?.[k]).filter(v => v != null);
+  return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
 }
 
 function renderEvolucionChart() {
@@ -593,11 +665,12 @@ function renderEvolucionChart() {
   const entries = memberEntries().slice(0, 20).slice().reverse();
   if (!entries.length) { return; }
   const labels = entries.map(e => formatDateShort(e.date));
-  const datasets = SCALES.map(s => ({
-    label: s.label,
-    data: entries.map(e => e.scores?.[s.key] ?? null),
-    borderColor: SCALE_COLORS[s.key],
-    backgroundColor: SCALE_COLORS[s.key] + '22',
+  // Una línea por SECCIÓN (3 líneas legibles)
+  const datasets = REPORT_SECTIONS.map(sec => ({
+    label: sec.section,
+    data: entries.map(e => sectionAvgEntry(sec.section, e)),
+    borderColor: sec.color,
+    backgroundColor: sec.color + '22',
     tension: 0.35, pointRadius: 3, spanGaps: true, fill: false
   }));
   state.charts.evo = new Chart(document.getElementById('chartEvolucion'), {
@@ -866,6 +939,68 @@ async function deleteMed(id) {
   if (window._fbDeleteMed) await window._fbDeleteMed(id);
   state.meds = state.meds.filter(m=>m.id!==id);
   renderMeds(); showToast('Medicamento eliminado');
+}
+
+// ── REPORTE MENSUAL: imprimir / PDF del registro actual (borrador o fecha) ──
+function buildReporteHTML() {
+  const m = state.currentMember;
+  const fecha = document.getElementById('entryDate').value || new Date().toISOString().split('T')[0];
+  const note = (document.getElementById('entryNote') || {}).value || '';
+  // Usa el borrador actual; si está vacío, intenta el registro guardado de esa fecha
+  let scores = state.draftScores;
+  if (!scores || Object.keys(scores).length === 0) {
+    const saved = memberEntries().find(e => e.date === fecha);
+    scores = saved ? saved.scores : {};
+    if (saved && saved.note) {} // nota del guardado se ignora aquí; usamos el textarea
+  }
+  const cell = (key) => {
+    const v = scores[key];
+    return SCALE_FACES.map((f,i) => `<span style="display:inline-block;width:22px;text-align:center;${i===v?'background:#5b3fa8;color:#fff;border-radius:4px;font-weight:bold;':'color:#999;'}">${i}</span>`).join('');
+  };
+  const sectionsHTML = REPORT_SECTIONS.map(sec => `
+    <tr><td colspan="2" style="background:${sec.color}22;color:#333;font-weight:bold;padding:6px 8px;border-top:2px solid ${sec.color};">${sec.section}</td></tr>
+    ${sec.groups.map(g => `
+      <tr><td colspan="2" style="font-style:italic;color:#666;font-size:11px;padding:4px 8px;background:#fafafa;">${g.group}</td></tr>
+      ${g.items.map(it => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee;">${it.label}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;">${cell(it.key)}</td></tr>`).join('')}
+    `).join('')}
+  `).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Reporte ${m} ${fecha}</title>
+    <style>
+      body{font-family:Arial,sans-serif;color:#222;padding:28px;max-width:760px;margin:0 auto;}
+      .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #5b3fa8;padding-bottom:8px;margin-bottom:6px;}
+      .brand{font-size:15px;font-weight:bold;color:#5b3fa8;}
+      h1{font-size:17px;color:#5b3fa8;margin:8px 0 2px;}
+      .sub{color:#555;font-size:12px;margin-bottom:14px;}
+      table{width:100%;border-collapse:collapse;font-size:12px;}
+      .leyenda{font-size:10px;color:#888;margin-top:6px;}
+      .nota{margin-top:14px;border:1px solid #ede7fb;background:#faf8ff;border-radius:6px;padding:10px;font-size:12px;}
+      .firma{margin-top:40px;display:flex;justify-content:space-between;font-size:11px;color:#555;}
+      .firma div{border-top:1px solid #999;padding-top:4px;width:45%;text-align:center;}
+      .foot{margin-top:24px;font-size:9px;color:#aaa;text-align:center;}
+      @media print{body{padding:0;}}
+    </style></head><body>
+    <div class="head"><div class="brand">🏠 RESIDENCIA MENASHO</div><div style="font-size:11px;color:#777;">Reporte Mensual de Residente</div></div>
+    <h1>Reporte de salud — ${m}</h1>
+    <div class="sub">Fecha: <strong>${formatDate(fecha)}</strong> · Generado: ${new Date().toLocaleDateString('es-MX')}</div>
+    <table>${sectionsHTML}</table>
+    <div class="leyenda">Escala 0 a 5 — 5 es el mayor número de veces y 0 lo más bajo.</div>
+    ${note ? `<div class="nota"><strong>Observaciones:</strong> ${note}</div>` : ''}
+    <div class="firma"><div>Elaboró (cuidador)</div><div>Revisó</div></div>
+    <div class="foot">Gestión Residencia MENASHO · Documento de seguimiento, no sustituye criterio médico profesional.</div>
+    </body></html>`;
+}
+function printReporteActual() {
+  const w = window.open('', '_blank');
+  w.document.write(buildReporteHTML());
+  w.document.close();
+  setTimeout(() => w.print(), 400);
+  showToast('Abriendo reporte para imprimir...');
+}
+function generarReportePDF() {
+  // Mismo contenido; el usuario elige "Guardar como PDF" en el diálogo de impresión
+  printReporteActual();
+  showToast('En el diálogo, elige "Guardar como PDF"');
 }
 
 // ── DESCARGAR EXPEDIENTE EN PDF ──
