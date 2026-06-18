@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script>
 const firebaseConfig = {
   apiKey: "AIzaSyAI1LJ4w5B23knDWB0c_M2QC3xwxX_qAOg",
@@ -21,6 +22,7 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+window._authReady = firebase.auth().signInAnonymously().catch(e => console.error('Auth:', e));
 // Colecciones separadas del módulo de gastos
 window._fbSaveEntry = async function(e) { const { id, ...d } = e; await db.collection('salud_estado').doc(id).set(d); };
 window._fbDeleteEntry = async function(id) { await db.collection('salud_estado').doc(id).delete(); };
@@ -1002,8 +1004,10 @@ function applyRolePermissions() {
 
 window._appInitFn = init;
 function _bootExp(){
-  if (window.MenashoAuth) { MenashoAuth.requireAuth(function(){ init(); }); }
-  else { init(); }
+  (window._authReady || Promise.resolve()).finally(function(){
+    if (window.MenashoAuth) { MenashoAuth.requireAuth(function(){ init(); }); }
+    else { init(); }
+  });
 }
 if (window._firebaseReady) _bootExp();
 else window._appInitFn = _bootExp;

@@ -25,6 +25,7 @@ document.head.appendChild(_ml);
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script>
 const firebaseConfig = {
   apiKey: "AIzaSyAI1LJ4w5B23knDWB0c_M2QC3xwxX_qAOg",
@@ -36,6 +37,7 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+window._authReady = firebase.auth().signInAnonymously().catch(e => console.error('Auth:', e));
 window._fbSaveConfig = async function() {
   await db.collection('config').doc('main').set({ members: state.members, paymentSources: state.paymentSources, categories: state.categories, fixedCategories: state.fixedCategories, fixedAmounts: state.fixedAmounts, membersCleaned: true });
 };
@@ -1910,8 +1912,10 @@ function applyRolePermissions() {
 
 window._appInitFn = init;
 function _bootGastos(){
-  if (window.MenashoAuth) { MenashoAuth.requireAuth(function(){ init(); }); }
-  else { init(); }
+  (window._authReady || Promise.resolve()).finally(function(){
+    if (window.MenashoAuth) { MenashoAuth.requireAuth(function(){ init(); }); }
+    else { init(); }
+  });
 }
 if (window._firebaseReady) _bootGastos();
 else window._appInitFn = _bootGastos;

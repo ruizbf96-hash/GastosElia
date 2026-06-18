@@ -11,10 +11,13 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script>
 const firebaseConfig = { apiKey:"AIzaSyAI1LJ4w5B23knDWB0c_M2QC3xwxX_qAOg", authDomain:"gastos-elia.firebaseapp.com", projectId:"gastos-elia", storageBucket:"gastos-elia.firebasestorage.app", messagingSenderId:"1047223330489", appId:"1:1047223330489:web:7c7fde9791484f6cbf5d68" };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+// Login anónimo: protege Firestore (solo usuarios autenticados por la app)
+window._authReady = firebase.auth().signInAnonymously().catch(e => console.error('Auth:', e));
 </script>
 <style>
 :root{--bg:#0f1117;--surface:#181b24;--surface2:#1f2333;--border:#2a2f45;--accent:#6c8fff;--accent2:#ff7c6e;--green:#4ecb8d;--yellow:#f5c542;--purple:#a78bfa;--text:#e8eaf0;--muted:#7a839c;--radius:18px;}
@@ -227,7 +230,8 @@ footer{text-align:center;padding:1.5rem;font-size:0.75rem;color:var(--muted);}
 // ── Launcher MENASHO: gate de PIN + panel de cambio de PIN ──
 document.addEventListener('DOMContentLoaded', function () {
   document.querySelector('main').style.visibility = 'hidden';
-  MenashoAuth.requireAuth(function (role) {
+  (window._authReady || Promise.resolve()).finally(function () {
+    MenashoAuth.requireAuth(function (role) {
     document.querySelector('main').style.visibility = 'visible';
     const bar = document.getElementById('roleBar');
     bar.style.display = 'flex';
@@ -241,6 +245,7 @@ document.addEventListener('DOMContentLoaded', function () {
     if (bp) bp.onclick = openPinPanel;
     document.getElementById('btnLogout').onclick = function () { MenashoAuth.logout(); };
     // Si es lectura, ocultar nada extra en el launcher (las apps lo gestionan)
+    });
   });
 });
 
