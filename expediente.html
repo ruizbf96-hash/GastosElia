@@ -27,6 +27,8 @@ window._authReady = firebase.auth().signInAnonymously().catch(e => console.error
 window._fbSaveEntry = async function(e) { const { id, ...d } = e; await db.collection('salud_estado').doc(id).set(d); };
 window._fbDeleteEntry = async function(id) { await db.collection('salud_estado').doc(id).delete(); };
 window._fbLoadEntries = async function() { const s = await db.collection('salud_estado').orderBy('date','desc').get(); state.entries = s.docs.map(d => ({ id: d.id, ...d.data() })); };
+window._fbSaveMensualNote = async function(member, month, text) { await db.collection('salud_mensual').doc(member+'_'+month).set({ member, month, text }); };
+window._fbLoadMensualNotes = async function() { const s = await db.collection('salud_mensual').get(); state.mensualNotes = {}; s.docs.forEach(d => { const x=d.data(); state.mensualNotes[x.member+'_'+x.month]=x.text; }); };
 window._fbSaveConsulta = async function(c) { const { id, ...d } = c; await db.collection('salud_consultas').doc(id).set(d); };
 window._fbDeleteConsulta = async function(id) { await db.collection('salud_consultas').doc(id).delete(); };
 window._fbLoadConsultas = async function() { const s = await db.collection('salud_consultas').orderBy('date','desc').get(); state.consultas = s.docs.map(d => ({ id: d.id, ...d.data() })); };
@@ -244,6 +246,7 @@ main{padding:1.5rem 2rem;max-width:1200px;margin:0 auto;}
 .btn-danger:hover{background:rgba(255,124,110,0.3);}
 .btn-sm{background:rgba(167,139,250,0.15);color:var(--accent);border:1px solid var(--accent);padding:0.3rem 0.7rem;border-radius:6px;cursor:pointer;font-size:0.78rem;}
 .chart-container{position:relative;height:300px;}
+input[type=week],input[type=month],input[type=date]{color-scheme:dark;}
 body.readonly .form-actions,body.readonly .btn-danger,body.readonly .btn-sm,body.readonly .face-btn{display:none !important;}
 body.readonly textarea,body.readonly input,body.readonly select{pointer-events:none;opacity:0.7;}
 body.readonly #tab-registro .card,body.readonly #tab-consultas .card:first-of-type,body.readonly #tab-medicacion .card:first-of-type{display:none;}
@@ -283,7 +286,8 @@ tbody td{padding:0.7rem 1rem;font-size:0.88rem;vertical-align:top;}
 
 <div class="nav-tabs">
   <button class="tab-btn active" onclick="switchTab('resumen')">📊 Resumen</button>
-  <button class="tab-btn" onclick="switchTab('registro')">📝 Registrar estado</button>
+  <button class="tab-btn" onclick="switchTab('registro')">📝 Registro semanal</button>
+  <button class="tab-btn" onclick="switchTab('mensual')">📋 Reporte mensual</button>
   <button class="tab-btn" onclick="switchTab('historial')">📅 Historial</button>
   <button class="tab-btn" onclick="switchTab('consultas')">🩺 Consultas</button>
   <button class="tab-btn" onclick="switchTab('medicacion')">💊 Medicación</button>
@@ -352,23 +356,48 @@ tbody td{padding:0.7rem 1rem;font-size:0.88rem;vertical-align:top;}
 
   <!-- REGISTRAR ESTADO -->
   <div class="tab-content" id="tab-registro">
-    <div class="section-title"><span class="dot"></span>¿Cómo está hoy?</div>
+    <div class="section-title"><span class="dot"></span>Resumen semanal del residente</div>
+    <div class="card" style="padding:1rem 1.3rem;">
+      <div style="display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap;">
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Semana a registrar</label>
+          <input type="week" id="entryWeek" style="max-width:220px;" onchange="onWeekChange()">
+        </div>
+        <div style="font-size:0.8rem;color:var(--muted);padding-bottom:0.6rem;" id="weekRangeLabel"></div>
+      </div>
+      <div id="weekExistsNote" style="font-size:0.78rem;color:var(--yellow);margin-top:0.4rem;"></div>
+    </div>
+    <div id="scalesContainer"></div>
     <div class="card">
-      <div class="form-group">
-        <label>Fecha</label>
-        <input type="date" id="entryDate" style="max-width:200px;">
+      <div class="form-group span2" style="margin-bottom:0;">
+        <label>Notas / observaciones generales de la semana</label>
+        <textarea id="entryNote" placeholder="Comportamiento, eventos, cambios notables de la semana..."></textarea>
       </div>
-      <div id="scalesContainer"></div>
-      <div class="form-group span2">
-        <label>Notas / observaciones del día</label>
-        <textarea id="entryNote" placeholder="Comportamiento, eventos, cambios notables..."></textarea>
+    </div>
+    <div class="form-actions" style="margin-bottom:2rem;">
+      <button class="btn-secondary" onclick="clearEntryForm()">Limpiar</button>
+      <button class="btn-secondary" onclick="printReporteActual()">🖨 Imprimir semana</button>
+      <button class="btn-primary" onclick="saveEntry()">💾 Guardar semana</button>
+    </div>
+  </div>
+
+  <!-- REPORTE MENSUAL -->
+  <div class="tab-content" id="tab-mensual">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <div class="section-title" style="margin:0"><span class="dot" style="background:var(--accent2)"></span>Reporte mensual automático</div>
+      <div style="display:flex;gap:0.5rem;align-items:center;">
+        <input type="month" id="reportMonth" onchange="renderMensual()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:0.4rem 0.7rem;border-radius:8px;outline:none;">
+        <button class="btn-secondary" onclick="printReporteMensual()" style="padding:0.5rem 1rem;">🖨 Imprimir</button>
       </div>
-      <div class="form-actions">
-        <button class="btn-secondary" onclick="clearEntryForm()">Limpiar</button>
-        <button class="btn-secondary" onclick="printReporteActual()">🖨 Imprimir reporte</button>
-        <button class="btn-secondary" onclick="generarReportePDF()">📄 Generar PDF</button>
-        <button class="btn-primary" onclick="saveEntry()">💾 Guardar registro</button>
+    </div>
+    <div class="disclaimer">Este reporte se calcula automáticamente a partir de los registros semanales del mes. Los valores promedio son fijos (reflejan lo registrado). Puedes añadir notas de cierre del mes abajo.</div>
+    <div id="mensualContent"></div>
+    <div class="card" style="margin-top:1rem;">
+      <div class="form-group span2" style="margin-bottom:0.5rem;">
+        <label>Notas de cierre del mes</label>
+        <textarea id="mensualNote" placeholder="Conclusiones, cambios relevantes, acuerdos con la familia o el médico..."></textarea>
       </div>
+      <div class="form-actions"><button class="btn-primary" onclick="saveMensualNote()">💾 Guardar notas del mes</button></div>
     </div>
   </div>
 
@@ -418,15 +447,74 @@ tbody td{padding:0.7rem 1rem;font-size:0.88rem;vertical-align:top;}
 <script>
 const MESES_FULL = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 // Escalas de estado: cada una de 1 (mal) a 5 (muy bien) con caritas
-const SCALES = [
-  { key: 'animo',    label: 'Ánimo',           faces: ['😢','😟','😐','🙂','😄'] },
-  { key: 'mental',   label: 'Estado mental / cognitivo', faces: ['😵‍💫','😕','😐','🙂','🧠'] },
-  { key: 'fisico',   label: 'Estado físico',   faces: ['🤕','😣','😐','💪','🤸'] },
-  { key: 'social',   label: 'Interacción social', faces: ['🙍','😶','😐','👥','🥳'] },
-  { key: 'sueno',    label: 'Sueño',           faces: ['😴','😪','😐','🛌','✨'] },
-  { key: 'apetito',  label: 'Apetito',         faces: ['🚫','😬','😐','🍽','😋'] }
+// ============ ESTRUCTURA DEL REPORTE (MENASHO) ============
+// Tipos de control: 'scale' (0-5 emojis), 'state' (semáforo), 'yesno' (sí/no), 'text' (cualitativo)
+const SCALE_FACES_DEF = {
+  animo:   ['😢','😟','😐','🙂','😄'],
+  fisico:  ['🤕','😣','😐','💪','🤸'],
+  mental:  ['😵‍💫','😕','😐','🙂','🧠'],
+  social:  ['🙍','😶','😐','👥','🥳'],
+  generic: ['🚫','😕','😐','🙂','😄']
+};
+const REPORT = [
+  { cat:'Salud Física', color:'#4ecb8d', subs:[
+    { sub:'Nutricional / Metabólico', items:[
+      { key:'comidas', label:'No. de comidas y entremeses', type:'scale', faces:'generic' },
+      { key:'agua', label:'Toma de agua al día', type:'scale', faces:'generic' }
+    ]},
+    { sub:'Eliminación', items:[
+      { key:'intestinal', label:'Intestinal', type:'state' },
+      { key:'urinaria', label:'Urinaria', type:'state' },
+      { key:'cutanea', label:'Cutánea', type:'state' },
+      { key:'sudor', label:'Sudor excesivo o anormal', type:'yesno' },
+      { key:'aseo', label:'Aseo personal', type:'scale', faces:'generic' }
+    ]},
+    { sub:'Actividad / Ejercicio', items:[
+      { key:'actividad', label:'Actividades físicas', type:'scale', faces:'fisico' },
+      { key:'ejercicio', label:'Ejercicio, caminar', type:'scale', faces:'fisico' },
+      { key:'actividad_obs', label:'Observación de actividad', type:'text', ph:'Ej. camina poca distancia y con dificultad' }
+    ]},
+    { sub:'Sueño / Descanso', items:[
+      { key:'duerme_noche', label:'Duerme ≥8 h en la noche', type:'scale', faces:'generic' },
+      { key:'duerme_dia', label:'Duerme durante el día', type:'yesno' },
+      { key:'insomnio', label:'Insomnio', type:'yesno' },
+      { key:'sueno_obs', label:'Observación de sueño', type:'text', ph:'Ej. se despierta 3 o 4 veces en la noche' }
+    ]}
+  ]},
+  { cat:'Salud Mental / Emocional', color:'#a78bfa', subs:[
+    { sub:'Cognitivo / Perceptivo', items:[
+      { key:'recreativas', label:'Participa en actividades recreativas', type:'scale', faces:'social' },
+      { key:'terapia', label:'Participa en terapia mental', type:'scale', faces:'generic' },
+      { key:'dolor', label:'Expresa / localiza dolor', type:'yesno' }
+    ]},
+    { sub:'Autopercepción / Autoconcepto', items:[
+      { key:'animo', label:'Estado de ánimo', type:'scale', faces:'animo' },
+      { key:'animo_desc', label:'¿Cómo describe su ánimo?', type:'text', ph:'Ej. ansioso, alegre, positivo...' },
+      { key:'relaciones', label:'Rol de relaciones con otros residentes', type:'scale', faces:'social' },
+      { key:'apoyo', label:'Apoyo familiar y amistades', type:'scale', faces:'social' }
+    ]},
+    { sub:'Adaptación / Tolerancia al estrés', items:[
+      { key:'tenso', label:'Tenso o irritado', type:'yesno' },
+      { key:'estres_obs', label:'Observación de estrés', type:'text', ph:'Ej. tenso por las tardes' }
+    ]}
+  ]},
+  { cat:'Salud Espiritual', color:'#f5c542', subs:[
+    { sub:'Valores / Creencias', items:[
+      { key:'preocupaciones', label:'Preocupaciones', type:'yesno' },
+      { key:'espiritual', label:'Práctica espiritual', type:'scale', faces:'generic' },
+      { key:'espiritual_obs', label:'Observación espiritual', type:'text', ph:'Notas sobre creencias o prácticas' }
+    ]}
+  ]}
 ];
-const SCALE_COLORS = { animo:'#a78bfa', mental:'#6c8fff', fisico:'#4ecb8d', social:'#f5c542', sueno:'#38bdf8', apetito:'#ff7c6e' };
+// Helpers de acceso plano
+const ALL_ITEMS = REPORT.flatMap(c => c.subs.flatMap(s => s.items.map(it => ({...it, cat:c.cat, color:c.color, sub:s.sub}))));
+function itemFaces(it){ return SCALE_FACES_DEF[it.faces] || SCALE_FACES_DEF.generic; }
+// SCALES: solo los ítems de tipo escala (para los gráficos existentes)
+const SCALES = ALL_ITEMS.filter(it => it.type==='scale').map(it => ({ key:it.key, label:it.label, faces:itemFaces(it), cat:it.cat, color:it.color }));
+const CAT_COLORS = { 'Salud Física':'#4ecb8d', 'Salud Mental / Emocional':'#a78bfa', 'Salud Espiritual':'#f5c542' };
+const SCALE_COLORS = Object.fromEntries(SCALES.map(s => [s.key, s.color]));
+// KPIs destacados del resumen
+const KPI_KEYS = ['animo','actividad','recreativas','espiritual'];
 
 let state = {
   members: ['Elia'],
@@ -436,6 +524,8 @@ let state = {
   meds: [],
   gastos: [],
   draftScores: {},
+  draftWeek: null,
+  mensualNotes: {},
   charts: {}
 };
 
@@ -447,6 +537,7 @@ async function load() {
   setLoading('Cargando datos...');
   if (window._fbLoadMembers) await window._fbLoadMembers();
   if (window._fbLoadEntries) await window._fbLoadEntries();
+  if (window._fbLoadMensualNotes) { try { await window._fbLoadMensualNotes(); } catch(e){ state.mensualNotes={}; } }
   if (window._fbLoadConsultas) await window._fbLoadConsultas();
   if (window._fbLoadMeds) await window._fbLoadMeds();
   if (window._fbLoadGastosMedicos) await window._fbLoadGastosMedicos();
@@ -466,40 +557,132 @@ function memberConsultas() { return state.consultas.filter(c => c.member === sta
 function memberMeds() { return state.meds.filter(m => m.member === state.currentMember); }
 
 // ── REGISTRAR ESTADO ──
+// ── FORMULARIO SEMANAL con controles mixtos ──
 function renderScales() {
   const cont = document.getElementById('scalesContainer');
-  cont.innerHTML = SCALES.map(s => `
-    <div class="scale-group">
-      <div class="scale-label"><span class="name">${s.label}</span><span class="val" id="val-${s.key}">—</span></div>
-      <div class="scale-faces">
-        ${s.faces.map((f,i) => `<button class="face-btn" id="face-${s.key}-${i+1}" onclick="setScore('${s.key}',${i+1})">${f}</button>`).join('')}
-      </div>
+  const d = state.draftScores;
+  cont.innerHTML = REPORT.map(c => `
+    <div class="card" style="border-top:3px solid ${c.color};margin-bottom:1.1rem;">
+      <div style="font-family:'DM Serif Display',serif;font-size:1.1rem;color:${c.color};margin-bottom:0.9rem;">${c.cat}</div>
+      ${c.subs.map(s => `
+        <div style="margin-bottom:1rem;">
+          <div style="font-size:0.74rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.7rem;border-bottom:1px solid var(--border);padding-bottom:0.3rem;">${s.sub}</div>
+          ${s.items.map(it => renderItemControl(it, d[it.key])).join('')}
+        </div>`).join('')}
     </div>`).join('');
 }
+
+function renderItemControl(it, val) {
+  if (it.type === 'scale') {
+    const faces = itemFaces(it);
+    return `<div class="scale-group" style="margin-bottom:0.85rem;">
+      <div class="scale-label"><span class="name">${it.label}</span><span class="val" id="val-${it.key}">${val!=null?val+'/5':'—'}</span></div>
+      <div class="scale-faces">
+        ${faces.map((f,i) => `<button class="face-btn ${val===(i+1)?'selected':''}" id="face-${it.key}-${i+1}" onclick="setScore('${it.key}',${i+1})">${f}</button>`).join('')}
+      </div>
+    </div>`;
+  }
+  if (it.type === 'state') {
+    const opts = [['malo','🔴 Malo','#c62828'],['regular','🟡 Regular','#f5c542'],['bueno','🟢 Bueno','#4ecb8d']];
+    return `<div class="scale-group" style="margin-bottom:0.85rem;">
+      <div class="scale-label"><span class="name">${it.label}</span></div>
+      <div style="display:flex;gap:0.5rem;">
+        ${opts.map(([v,lbl,col]) => `<button class="state-btn ${val===v?'sel':''}" data-col="${col}" onclick="setStateVal('${it.key}','${v}')" style="flex:1;padding:0.5rem;border-radius:8px;border:1px solid ${val===v?col:'var(--border)'};background:${val===v?col+'22':'var(--surface2)'};color:${val===v?col:'var(--muted)'};cursor:pointer;font-size:0.82rem;">${lbl}</button>`).join('')}
+      </div>
+    </div>`;
+  }
+  if (it.type === 'yesno') {
+    return `<div class="scale-group" style="margin-bottom:0.85rem;display:flex;justify-content:space-between;align-items:center;">
+      <span class="name" style="font-size:0.9rem;">${it.label}</span>
+      <div style="display:flex;gap:0.5rem;">
+        <button onclick="setYesNo('${it.key}','si')" style="padding:0.4rem 1.1rem;border-radius:8px;border:1px solid ${val==='si'?'#4ecb8d':'var(--border)'};background:${val==='si'?'rgba(78,203,141,0.18)':'var(--surface2)'};color:${val==='si'?'#4ecb8d':'var(--muted)'};cursor:pointer;font-size:0.85rem;">✓ Sí</button>
+        <button onclick="setYesNo('${it.key}','no')" style="padding:0.4rem 1.1rem;border-radius:8px;border:1px solid ${val==='no'?'#ff7c6e':'var(--border)'};background:${val==='no'?'rgba(255,124,110,0.18)':'var(--surface2)'};color:${val==='no'?'#ff7c6e':'var(--muted)'};cursor:pointer;font-size:0.85rem;">✗ No</button>
+      </div>
+    </div>`;
+  }
+  if (it.type === 'text') {
+    return `<div class="form-group" style="margin-bottom:0.85rem;">
+      <label>${it.label}</label>
+      <input type="text" id="txt-${it.key}" value="${(val||'').replace(/"/g,'&quot;')}" placeholder="${it.ph||''}" onchange="setTextVal('${it.key}',this.value)">
+    </div>`;
+  }
+  return '';
+}
+
 function setScore(key, val) {
   state.draftScores[key] = val;
-  document.getElementById('val-'+key).textContent = val + '/5';
-  SCALES.find(s=>s.key===key).faces.forEach((_,i) => {
+  const v = document.getElementById('val-'+key); if (v) v.textContent = val + '/5';
+  const it = ALL_ITEMS.find(x=>x.key===key);
+  itemFaces(it).forEach((_,i) => {
     const el = document.getElementById(`face-${key}-${i+1}`);
     if (el) el.classList.toggle('selected', (i+1)===val);
   });
 }
+function setStateVal(key, val) { state.draftScores[key] = val; renderScales(); }
+function setYesNo(key, val) { state.draftScores[key] = val; renderScales(); }
+function setTextVal(key, val) { state.draftScores[key] = val.trim(); }
+
+// ── SEMANA ──
+function isoWeekString(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2,'0')}`;
+}
+function weekRange(weekStr) {
+  // weekStr: '2026-W12' → devuelve {start, end} como Date (lunes a domingo)
+  const [y, w] = weekStr.split('-W').map(Number);
+  const simple = new Date(Date.UTC(y,0,1 + (w-1)*7));
+  const dow = simple.getUTCDay() || 7;
+  const monday = new Date(simple); monday.setUTCDate(simple.getUTCDate() - dow + 1);
+  const sunday = new Date(monday); sunday.setUTCDate(monday.getUTCDate() + 6);
+  return { start: monday, end: sunday };
+}
+function onWeekChange() {
+  const wk = document.getElementById('entryWeek').value;
+  state.draftWeek = wk;
+  const lbl = document.getElementById('weekRangeLabel');
+  const note = document.getElementById('weekExistsNote');
+  if (wk) {
+    const { start, end } = weekRange(wk);
+    lbl.textContent = `${formatDate(start.toISOString().split('T')[0])} — ${formatDate(end.toISOString().split('T')[0])}`;
+    // ¿Ya existe registro de esta semana?
+    const existing = memberEntries().find(e => e.week === wk);
+    if (existing) {
+      note.textContent = '⚠️ Ya hay un registro de esta semana. Al guardar lo actualizarás.';
+      state.draftScores = { ...existing.scores };
+      document.getElementById('entryNote').value = existing.note || '';
+    } else {
+      note.textContent = '';
+    }
+    renderScales();
+  } else { lbl.textContent = ''; note.textContent = ''; }
+}
 function clearEntryForm() {
   state.draftScores = {};
   document.getElementById('entryNote').value = '';
-  document.getElementById('entryDate').value = new Date().toISOString().split('T')[0];
-  renderScales();
+  const now = new Date();
+  document.getElementById('entryWeek').value = isoWeekString(now);
+  onWeekChange();
 }
 async function saveEntry() {
-  const date = document.getElementById('entryDate').value;
+  const week = document.getElementById('entryWeek').value;
   const note = document.getElementById('entryNote').value.trim();
-  if (!date) { showToast('Indica la fecha', true); return; }
-  if (Object.keys(state.draftScores).length === 0) { showToast('Marca al menos un indicador', true); return; }
-  const entry = { id: uid(), member: state.currentMember, date, scores: {...state.draftScores}, note };
+  if (!week) { showToast('Selecciona la semana', true); return; }
+  if (Object.keys(state.draftScores).length === 0) { showToast('Registra al menos un indicador', true); return; }
+  // La fecha del registro = lunes de la semana (para orden cronológico)
+  const { start } = weekRange(week);
+  const date = start.toISOString().split('T')[0];
+  // Si ya existe esa semana, conserva su id (actualiza)
+  const existing = memberEntries().find(e => e.week === week);
+  const entry = { id: existing ? existing.id : uid(), member: state.currentMember, week, date, scores: {...state.draftScores}, note };
   if (window._fbSaveEntry) { showToast('Guardando...'); await window._fbSaveEntry(entry); }
-  state.entries.push(entry);
-  state.entries.sort((a,b)=>b.date.localeCompare(a.date));
-  clearEntryForm(); renderAll(); showToast('Registro guardado ✓');
+  if (existing) { const i = state.entries.findIndex(e=>e.id===existing.id); state.entries[i] = entry; }
+  else state.entries.push(entry);
+  state.entries.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  renderAll(); showToast('Semana guardada ✓');
 }
 
 // ── RESUMEN ──
@@ -508,14 +691,14 @@ function renderResumen() {
   const personaEl = document.getElementById('resumenPersona');
   if (personaEl) personaEl.textContent = state.currentMember;
   const last7 = entries.slice(0, 7);
-  const avgOf = (key, list) => { const vals = list.map(e=>e.scores?.[key]).filter(v=>v!=null); return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null; };
+  const avgOf = (key, list) => { const vals = list.map(e=>e.scores?.[key]).filter(v=>typeof v==='number'); return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null; };
 
   const kpiKeys = ['animo','mental','fisico','social'];
   document.getElementById('resumenKpis').innerHTML = kpiKeys.map(k => {
     const s = SCALES.find(x=>x.key===k);
     const avg = avgOf(k, last7);
     const face = avg!=null ? s.faces[Math.min(4, Math.round(avg)-1)] : '—';
-    return `<div class="kpi-card" style="--card-color:${SCALE_COLORS[k]}"><div class="kpi-label">${s.label}</div><div class="kpi-value" style="color:${SCALE_COLORS[k]}">${avg!=null?avg.toFixed(1):'—'} <span style="font-size:1.3rem">${face}</span></div><div class="kpi-sub">Promedio últimos 7 registros</div></div>`;
+    return `<div class="kpi-card" style="--card-color:${SCALE_COLORS[k]}"><div class="kpi-label">${s.label}</div><div class="kpi-value" style="color:${SCALE_COLORS[k]}">${avg!=null?avg.toFixed(1):'—'} <span style="font-size:1.3rem">${face}</span></div><div class="kpi-sub">Promedio últimas 7 semanas</div></div>`;
   }).join('');
 
   renderRadarChart();
@@ -532,7 +715,7 @@ function renderResumen() {
 function renderRadarChart() {
   if (state.charts.radar) { state.charts.radar.destroy(); delete state.charts.radar; }
   const last7 = memberEntries().slice(0, 7);
-  const avgOf = (key) => { const v = last7.map(e=>e.scores?.[key]).filter(x=>x!=null); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : 0; };
+  const avgOf = (key) => { const v = last7.map(e=>e.scores?.[key]).filter(x=>typeof x==='number'); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : 0; };
   state.charts.radar = new Chart(document.getElementById('chartRadar'), {
     type: 'radar',
     data: {
@@ -555,7 +738,7 @@ function renderRadarChart() {
 function renderBarrasChart() {
   if (state.charts.barras) { state.charts.barras.destroy(); delete state.charts.barras; }
   const last7 = memberEntries().slice(0, 7);
-  const avgOf = (key) => { const v = last7.map(e=>e.scores?.[key]).filter(x=>x!=null); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : 0; };
+  const avgOf = (key) => { const v = last7.map(e=>e.scores?.[key]).filter(x=>typeof x==='number'); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : 0; };
   state.charts.barras = new Chart(document.getElementById('chartBarras'), {
     type: 'bar',
     data: {
@@ -622,45 +805,40 @@ function renderDiasKpis() {
   if (!el) return;
   const now = new Date();
   const mk = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
-  const monthEntries = memberEntries().filter(e => e.date.startsWith(mk));
+  const monthEntries = memberEntries().filter(e => (e.date||'').startsWith(mk));
   const animoOf = e => e.scores?.animo;
   const buenos = monthEntries.filter(e => animoOf(e) >= 4).length;
   const dificiles = monthEntries.filter(e => animoOf(e) != null && animoOf(e) <= 2).length;
   const neutros = monthEntries.filter(e => animoOf(e) === 3).length;
   el.innerHTML = `
-    <div class="kpi-card" style="--card-color:#4ecb8d"><div class="kpi-label">Días buenos (ánimo ≥4)</div><div class="kpi-value" style="color:#4ecb8d">${buenos} 😄</div><div class="kpi-sub">Este mes</div></div>
-    <div class="kpi-card" style="--card-color:#f5c542"><div class="kpi-label">Días neutros</div><div class="kpi-value" style="color:#f5c542">${neutros} 😐</div><div class="kpi-sub">Este mes</div></div>
-    <div class="kpi-card" style="--card-color:#ff7c6e"><div class="kpi-label">Días difíciles (≤2)</div><div class="kpi-value" style="color:#ff7c6e">${dificiles} 😢</div><div class="kpi-sub">Este mes</div></div>
-    <div class="kpi-card" style="--card-color:#a78bfa"><div class="kpi-label">Días registrados</div><div class="kpi-value" style="color:#a78bfa">${monthEntries.length}</div><div class="kpi-sub">Este mes</div></div>`;
+    <div class="kpi-card" style="--card-color:#4ecb8d"><div class="kpi-label">Semanas buenas (ánimo ≥4)</div><div class="kpi-value" style="color:#4ecb8d">${buenos} 😄</div><div class="kpi-sub">Este mes</div></div>
+    <div class="kpi-card" style="--card-color:#f5c542"><div class="kpi-label">Semanas neutras</div><div class="kpi-value" style="color:#f5c542">${neutros} 😐</div><div class="kpi-sub">Este mes</div></div>
+    <div class="kpi-card" style="--card-color:#ff7c6e"><div class="kpi-label">Semanas difíciles (≤2)</div><div class="kpi-value" style="color:#ff7c6e">${dificiles} 😢</div><div class="kpi-sub">Este mes</div></div>
+    <div class="kpi-card" style="--card-color:#a78bfa"><div class="kpi-label">Semanas registradas</div><div class="kpi-value" style="color:#a78bfa">${monthEntries.length}</div><div class="kpi-sub">Este mes</div></div>`;
 }
 
-// ── Mapa de calor del ánimo (12 semanas) ──
+// ── Mapa de calor del ánimo (últimas 12 semanas) ──
 function renderHeatmap() {
   const cont = document.getElementById('heatmapGrid');
   if (!cont) return;
-  const entries = memberEntries();
-  const byDate = {};
-  entries.forEach(e => { if (e.scores?.animo != null) byDate[e.date] = e.scores.animo; });
+  const byWeek = {};
+  memberEntries().forEach(e => { if (e.week && e.scores?.animo != null) byWeek[e.week] = e.scores.animo; });
   const colorFor = v => v==null ? '#1f2333' : v<=2 ? '#c62828' : v==3 ? '#f5c542' : '#4ecb8d';
-  const dias = ['L','M','X','J','V','S','D'];
+  // Generar las últimas 12 semanas (ISO) hacia atrás desde hoy
   const today = new Date();
-  // 12 semanas hacia atrás, alineadas a lunes
-  const start = new Date(today); start.setDate(today.getDate() - 7*11 - ((today.getDay()+6)%7));
-  let html = '<div style="display:flex;gap:3px;"><div style="display:flex;flex-direction:column;gap:3px;margin-right:4px;justify-content:space-around;">'+dias.map(d=>`<div style="font-size:0.6rem;color:var(--muted);height:14px;">${d}</div>`).join('')+'</div>';
-  html += '<div style="display:flex;gap:3px;">';
-  for (let w=0; w<12; w++) {
-    html += '<div style="display:flex;flex-direction:column;gap:3px;">';
-    for (let d=0; d<7; d++) {
-      const cur = new Date(start); cur.setDate(start.getDate() + w*7 + d);
-      const key = cur.toISOString().split('T')[0];
-      const v = byDate[key];
-      const title = `${formatDate(key)}${v!=null?': ánimo '+v+'/5':' (sin registro)'}`;
-      html += `<div title="${title}" style="width:14px;height:14px;border-radius:3px;background:${colorFor(v)};"></div>`;
-    }
-    html += '</div>';
+  const cells = [];
+  for (let i=11; i>=0; i--) {
+    const d = new Date(today); d.setDate(today.getDate() - i*7);
+    const wk = isoWeekString(d);
+    const { start } = weekRange(wk);
+    cells.push({ wk, label: formatDateShort(start.toISOString().split('T')[0]), v: byWeek[wk] });
   }
-  html += '</div></div>';
-  cont.innerHTML = html;
+  cont.innerHTML = '<div style="display:flex;gap:5px;align-items:flex-end;flex-wrap:wrap;">' +
+    cells.map(c => `
+      <div style="text-align:center;">
+        <div title="Semana ${c.label}${c.v!=null?': ánimo '+c.v+'/5':' (sin registro)'}" style="width:30px;height:30px;border-radius:6px;background:${colorFor(c.v)};display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:#fff;">${c.v!=null?c.v:''}</div>
+        <div style="font-size:0.58rem;color:var(--muted);margin-top:3px;">${c.label}</div>
+      </div>`).join('') + '</div>';
 }
 
 // ── Ánimo vs cambios de medicación (líneas verticales en inicios de med) ──
@@ -746,7 +924,7 @@ function renderInsight() {
   if (entries.length < 2) { el.innerHTML = `Registra el estado al menos 2 días para ver una lectura de evolución.`; return; }
   const recent = entries.slice(0, 7);
   const older = entries.slice(7, 14);
-  const avgOf = (key, list) => { const v = list.map(e=>e.scores?.[key]).filter(x=>x!=null); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null; };
+  const avgOf = (key, list) => { const v = list.map(e=>e.scores?.[key]).filter(x=>typeof x==='number'); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null; };
   const parts = [];
   SCALES.forEach(s => {
     const r = avgOf(s.key, recent), o = avgOf(s.key, older);
@@ -769,18 +947,22 @@ function renderInsight() {
 function renderHistorial() {
   const entries = memberEntries();
   const cont = document.getElementById('historialList');
-  if (!entries.length) { cont.innerHTML = `<div class="no-data">Aún no hay registros. Ve a "Registrar estado" para añadir el primero.</div>`; return; }
-  cont.innerHTML = entries.map(e => `
+  if (!entries.length) { cont.innerHTML = `<div class="no-data">Aún no hay registros. Ve a "Registro semanal" para añadir el primero.</div>`; return; }
+  cont.innerHTML = entries.map(e => {
+    let label = formatDate(e.date);
+    if (e.week) { const {start,end}=weekRange(e.week); label = `Semana ${formatDate(start.toISOString().split('T')[0])} – ${formatDate(end.toISOString().split('T')[0])}`; }
+    return `
     <div class="entry-item">
       <div class="entry-head">
-        <span class="entry-date">📅 ${formatDate(e.date)}</span>
+        <span class="entry-date">📅 ${label}</span>
         <button class="btn-danger" onclick="deleteEntry('${e.id}')">✕</button>
       </div>
       <div class="entry-scores">
-        ${SCALES.filter(s=>e.scores?.[s.key]!=null).map(s => `<span class="score-chip">${s.faces[e.scores[s.key]-1]} ${s.label}: ${e.scores[s.key]}/5</span>`).join('')}
+        ${SCALES.filter(s=>typeof e.scores?.[s.key]==='number').map(s => `<span class="score-chip">${s.faces[e.scores[s.key]-1]} ${s.label}: ${e.scores[s.key]}/5</span>`).join('')}
       </div>
       ${e.note ? `<div class="entry-note">📝 ${e.note}</div>` : ''}
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 async function deleteEntry(id) {
   if (!confirm('¿Eliminar este registro?')) return;
@@ -873,59 +1055,65 @@ async function deleteMed(id) {
 // ── REPORTE MENSUAL: imprimir / PDF del registro actual (borrador o fecha) ──
 function buildReporteHTML() {
   const m = state.currentMember;
-  const fecha = document.getElementById('entryDate').value || new Date().toISOString().split('T')[0];
+  const wk = document.getElementById('entryWeek').value;
   const note = (document.getElementById('entryNote') || {}).value || '';
-  // Usa el borrador actual; si está vacío, intenta el registro guardado de esa fecha
-  let scores = state.draftScores;
-  if (!scores || Object.keys(scores).length === 0) {
-    const saved = memberEntries().find(e => e.date === fecha);
-    scores = saved ? saved.scores : {};
-    if (saved && saved.note) {} // nota del guardado se ignora aquí; usamos el textarea
-  }
-  const cell = (s) => {
-    const v = scores[s.key];
-    // Muestra las 5 caras de la escala, resaltando la elegida
-    return s.faces.map((f,i) => `<span style="display:inline-block;width:30px;text-align:center;font-size:16px;${(i+1)===v?'background:#ede7fb;border-radius:6px;':'opacity:0.35;'}">${f}</span>`).join('')
-      + `<span style="margin-left:8px;color:#5b3fa8;font-weight:bold;">${v!=null?v+'/5':'—'}</span>`;
+  const scores = state.draftScores || {};
+  let rangeLabel = wk;
+  if (wk) { const {start,end}=weekRange(wk); rangeLabel = formatDate(start.toISOString().split('T')[0])+' al '+formatDate(end.toISOString().split('T')[0]); }
+
+  const cellFor = (it) => {
+    const v = scores[it.key];
+    if (it.type === 'scale') {
+      const faces = itemFaces(it);
+      return faces.map((f,i) => `<span style="display:inline-block;width:26px;text-align:center;font-size:15px;${(i+1)===v?'background:#ede7fb;border-radius:6px;':'opacity:0.3;'}">${f}</span>`).join('')
+        + `<span style="margin-left:8px;color:#5b3fa8;font-weight:bold;">${v!=null?v+'/5':'—'}</span>`;
+    }
+    if (it.type === 'state') { const e={bueno:'🟢 Bueno',regular:'🟡 Regular',malo:'🔴 Malo'}; return e[v]||'—'; }
+    if (it.type === 'yesno') return v==='si'?'✓ Sí':(v==='no'?'✗ No':'—');
+    if (it.type === 'text') return v?`<em>${v}</em>`:'—';
+    return '—';
   };
-  const sectionsHTML = SCALES.map(s => `
-    <tr><td style="padding:7px 8px;border-bottom:1px solid #eee;width:38%;">${s.label}</td><td style="padding:7px 8px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;">${cell(s)}</td></tr>
+  const sectionsHTML = REPORT.map(c => `
+    <tr><td colspan="2" style="background:${c.color}22;font-weight:bold;padding:6px 8px;border-top:2px solid ${c.color};">${c.cat}</td></tr>
+    ${c.subs.map(s => `
+      <tr><td colspan="2" style="font-style:italic;color:#666;font-size:11px;padding:3px 8px;background:#fafafa;">${s.sub}</td></tr>
+      ${s.items.map(it => `<tr><td style="padding:5px 8px;border-bottom:1px solid #eee;width:45%;">${it.label}</td><td style="padding:5px 8px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;">${cellFor(it)}</td></tr>`).join('')}
+    `).join('')}
   `).join('');
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Reporte ${m} ${fecha}</title>
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Reporte semanal ${m}</title>
     <style>
       body{font-family:Arial,sans-serif;color:#222;padding:28px;max-width:760px;margin:0 auto;}
-      .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #5b3fa8;padding-bottom:8px;margin-bottom:6px;}
+      .head{display:flex;justify-content:space-between;border-bottom:2px solid #5b3fa8;padding-bottom:8px;margin-bottom:6px;}
       .brand{font-size:15px;font-weight:bold;color:#5b3fa8;}
       h1{font-size:17px;color:#5b3fa8;margin:8px 0 2px;}
       .sub{color:#555;font-size:12px;margin-bottom:14px;}
       table{width:100%;border-collapse:collapse;font-size:12px;}
-      .leyenda{font-size:10px;color:#888;margin-top:6px;}
       .nota{margin-top:14px;border:1px solid #ede7fb;background:#faf8ff;border-radius:6px;padding:10px;font-size:12px;}
       .firma{margin-top:40px;display:flex;justify-content:space-between;font-size:11px;color:#555;}
       .firma div{border-top:1px solid #999;padding-top:4px;width:45%;text-align:center;}
       .foot{margin-top:24px;font-size:9px;color:#aaa;text-align:center;}
       @media print{body{padding:0;}}
     </style></head><body>
-    <div class="head"><div class="brand">🏠 RESIDENCIA MENASHO</div><div style="font-size:11px;color:#777;">Reporte Mensual de Residente</div></div>
+    <div class="head"><div class="brand">🏠 RESIDENCIA MENASHO</div><div style="font-size:11px;color:#777;">Reporte Semanal de Residente</div></div>
     <h1>Reporte de salud — ${m}</h1>
-    <div class="sub">Fecha: <strong>${formatDate(fecha)}</strong> · Generado: ${new Date().toLocaleDateString('es-MX')}</div>
+    <div class="sub">Semana: <strong>${rangeLabel}</strong> · Generado: ${new Date().toLocaleDateString('es-MX')}</div>
     <table>${sectionsHTML}</table>
-    <div class="leyenda">Escala 0 a 5 — 5 es el mayor número de veces y 0 lo más bajo.</div>
-    ${note ? `<div class="nota"><strong>Observaciones:</strong> ${note}</div>` : ''}
+    <div style="font-size:10px;color:#888;margin-top:6px;">Escala 1 a 5 (5 = mejor/más frecuente).</div>
+    ${note ? `<div class="nota"><strong>Observaciones de la semana:</strong> ${note}</div>` : ''}
     <div class="firma"><div>Elaboró (cuidador)</div><div>Revisó</div></div>
     <div class="foot">Gestión Residencia MENASHO · Documento de seguimiento, no sustituye criterio médico profesional.</div>
     </body></html>`;
 }
 function printReporteActual() {
+  if (!document.getElementById('entryWeek').value) { showToast('Selecciona una semana primero', true); return; }
   const w = window.open('', '_blank');
   w.document.write(buildReporteHTML());
   w.document.close();
   setTimeout(() => w.print(), 400);
-  showToast('Abriendo reporte para imprimir...');
+  showToast('Abriendo reporte semanal...');
 }
 function generarReportePDF() {
-  // Mismo contenido; el usuario elige "Guardar como PDF" en el diálogo de impresión
   printReporteActual();
   showToast('En el diálogo, elige "Guardar como PDF"');
 }
@@ -937,7 +1125,7 @@ function downloadExpedientePDF() {
   const consultas = memberConsultas();
   const meds = memberMeds();
   const last7 = entries.slice(0, 7);
-  const avgOf = (key) => { const v = last7.map(e=>e.scores?.[key]).filter(x=>x!=null); return v.length ? (v.reduce((a,b)=>a+b,0)/v.length) : null; };
+  const avgOf = (key) => { const v = last7.map(e=>e.scores?.[key]).filter(x=>typeof x==='number'); return v.length ? (v.reduce((a,b)=>a+b,0)/v.length) : null; };
 
   const promedios = SCALES.map(s => { const a = avgOf(s.key); return { label: s.label, avg: a, face: a!=null ? s.faces[Math.min(4,Math.round(a)-1)] : '—' }; });
 
@@ -963,7 +1151,7 @@ function downloadExpedientePDF() {
     <h1>Gestión Residencia MENASHO — Expediente de Salud</h1>
     <div class="sub">Paciente: <strong>${m}</strong> · Generado: ${new Date().toLocaleDateString('es-MX')} · Registros: ${entries.length}</div>
 
-    <h2>Estado general (promedio últimos 7 registros)</h2>
+    <h2>Estado general (promedio últimas 7 semanas)</h2>
     <div class="grid">
       ${promedios.map(p => `<div class="k"><div class="l">${p.label}</div><div class="v">${p.avg!=null?p.avg.toFixed(1)+'/5':'—'} ${p.face}</div></div>`).join('')}
     </div>
@@ -996,14 +1184,205 @@ function formatDateShort(d) { const x=new Date(d); return `${String(x.getDate())
 function uid() { return Math.random().toString(36).substr(2,9); }
 function showToast(msg, error=false) { const t=document.getElementById('toast'); t.textContent=msg; t.className='toast show'+(error?' error':''); setTimeout(()=>t.className='toast',2600); }
 
+// ════════ REPORTE MENSUAL AUTOMÁTICO ════════
+// Entradas (semanas) de un mes dado 'YYYY-MM'
+function entriesOfMonth(monthStr) {
+  return memberEntries().filter(e => (e.date||'').slice(0,7) === monthStr)
+    .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+}
+// Resumen mixto de un ítem a partir de las semanas del mes
+function summarizeItem(it, weeks) {
+  const vals = weeks.map(w => w.scores?.[it.key]).filter(v => v != null && v !== '');
+  if (!vals.length) return { type: it.type, empty: true };
+  if (it.type === 'scale') {
+    const nums = vals.filter(v => typeof v === 'number');
+    if (!nums.length) return { type:'scale', empty:true };
+    const avg = nums.reduce((a,b)=>a+b,0)/nums.length;
+    return { type:'scale', avg, n:nums.length, series:nums, faces:itemFaces(it) };
+  }
+  if (it.type === 'state') {
+    const count = {}; vals.forEach(v => count[v]=(count[v]||0)+1);
+    const top = Object.entries(count).sort((a,b)=>b[1]-a[1])[0][0];
+    return { type:'state', mode:top, n:vals.length, count };
+  }
+  if (it.type === 'yesno') {
+    const si = vals.filter(v=>v==='si').length;
+    return { type:'yesno', si, total:vals.length };
+  }
+  if (it.type === 'text') {
+    return { type:'text', notes: vals };
+  }
+  return { type:it.type, empty:true };
+}
+// Tendencia intra-mes (compara 1ª mitad vs 2ª mitad de semanas) y vs mes anterior
+function scaleTrend(it, weeks, prevWeeks) {
+  const nums = weeks.map(w=>w.scores?.[it.key]).filter(v=>typeof v==='number');
+  let intra = null;
+  if (nums.length >= 2) {
+    const half = Math.floor(nums.length/2);
+    const first = nums.slice(0,half), last = nums.slice(half);
+    const a = first.reduce((x,y)=>x+y,0)/first.length;
+    const b = last.reduce((x,y)=>x+y,0)/last.length;
+    intra = b - a;
+  }
+  let vsPrev = null;
+  const pnums = (prevWeeks||[]).map(w=>w.scores?.[it.key]).filter(v=>typeof v==='number');
+  if (nums.length && pnums.length) {
+    const cur = nums.reduce((x,y)=>x+y,0)/nums.length;
+    const prev = pnums.reduce((x,y)=>x+y,0)/pnums.length;
+    vsPrev = cur - prev;
+  }
+  return { intra, vsPrev };
+}
+function trendArrow(diff) {
+  if (diff == null || Math.abs(diff) < 0.25) return '<span style="color:var(--muted)">→</span>';
+  return diff > 0 ? '<span style="color:var(--green)">↑</span>' : '<span style="color:var(--accent2)">↓</span>';
+}
+
+function renderMensual() {
+  const monthStr = document.getElementById('reportMonth').value || new Date().toISOString().slice(0,7);
+  document.getElementById('reportMonth').value = monthStr;
+  const weeks = entriesOfMonth(monthStr);
+  // Mes anterior
+  const [y,m] = monthStr.split('-').map(Number);
+  const prevDate = new Date(y, m-2, 1);
+  const prevStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
+  const prevWeeks = entriesOfMonth(prevStr);
+  const cont = document.getElementById('mensualContent');
+
+  if (!weeks.length) {
+    cont.innerHTML = `<div class="no-data">No hay registros semanales en ${monthStr}. Ve a "Registro semanal" para capturar.</div>`;
+  } else {
+    cont.innerHTML = `
+      <div class="card" style="margin-bottom:1rem;">
+        <div style="font-size:0.85rem;color:var(--muted);">📅 ${weeks.length} semana(s) registrada(s) en este mes</div>
+      </div>
+      ${REPORT.map(c => `
+        <div class="card" style="border-top:3px solid ${c.color};margin-bottom:1rem;">
+          <div style="font-family:'DM Serif Display',serif;font-size:1.1rem;color:${c.color};margin-bottom:0.8rem;">${c.cat}</div>
+          ${c.subs.map(s => `
+            <div style="margin-bottom:0.8rem;">
+              <div style="font-size:0.72rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.5rem;">${s.sub}</div>
+              ${s.items.map(it => renderMensualItem(it, weeks, prevWeeks)).join('')}
+            </div>`).join('')}
+        </div>`).join('')}`;
+  }
+  // Cargar nota mensual guardada
+  const key = state.currentMember + '_' + monthStr;
+  document.getElementById('mensualNote').value = (state.mensualNotes && state.mensualNotes[key]) || '';
+}
+
+function renderMensualItem(it, weeks, prevWeeks) {
+  const sum = summarizeItem(it, weeks);
+  if (sum.empty) return `<div style="display:flex;justify-content:space-between;padding:0.35rem 0;font-size:0.85rem;color:var(--muted);"><span>${it.label}</span><span>— sin datos</span></div>`;
+  if (sum.type === 'scale') {
+    const tr = scaleTrend(it, weeks, prevWeeks);
+    const face = sum.faces[Math.min(4, Math.round(sum.avg)-1)] || '';
+    let trendTxt = trendArrow(tr.intra) + ' <span style="font-size:0.7rem;color:var(--muted)">en el mes</span>';
+    if (tr.vsPrev != null) trendTxt += ` &nbsp; ${trendArrow(tr.vsPrev)} <span style="font-size:0.7rem;color:var(--muted)">vs mes ant.</span>`;
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0;border-bottom:1px solid var(--border);">
+      <span style="font-size:0.88rem;">${it.label}</span>
+      <span style="display:flex;align-items:center;gap:0.8rem;"><strong style="color:${it.color}">${sum.avg.toFixed(1)}/5</strong> <span style="font-size:1.1rem">${face}</span> <span style="font-size:0.85rem">${trendTxt}</span></span>
+    </div>`;
+  }
+  if (sum.type === 'state') {
+    const colors = { bueno:'#4ecb8d', regular:'#f5c542', malo:'#c62828' };
+    const emoji = { bueno:'🟢', regular:'🟡', malo:'🔴' };
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0;border-bottom:1px solid var(--border);">
+      <span style="font-size:0.88rem;">${it.label}</span>
+      <span style="color:${colors[sum.mode]};font-weight:600;font-size:0.85rem;">${emoji[sum.mode]} ${sum.mode.charAt(0).toUpperCase()+sum.mode.slice(1)} <span style="color:var(--muted);font-weight:400">(${sum.count[sum.mode]} de ${sum.n} sem.)</span></span>
+    </div>`;
+  }
+  if (sum.type === 'yesno') {
+    const pct = sum.si/sum.total;
+    const col = pct >= 0.5 ? '#ff7c6e' : '#4ecb8d';
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0;border-bottom:1px solid var(--border);">
+      <span style="font-size:0.88rem;">${it.label}</span>
+      <span style="color:${col};font-weight:600;font-size:0.85rem;">Sí en ${sum.si} de ${sum.total} semanas</span>
+    </div>`;
+  }
+  if (sum.type === 'text') {
+    return `<div style="padding:0.4rem 0;border-bottom:1px solid var(--border);">
+      <div style="font-size:0.82rem;color:var(--muted);margin-bottom:0.2rem;">${it.label}:</div>
+      ${sum.notes.map(n=>`<div style="font-size:0.85rem;padding-left:0.6rem;border-left:2px solid ${it.color};margin-bottom:0.2rem;">${n}</div>`).join('')}
+    </div>`;
+  }
+  return '';
+}
+
+async function saveMensualNote() {
+  const monthStr = document.getElementById('reportMonth').value;
+  const text = document.getElementById('mensualNote').value.trim();
+  const key = state.currentMember + '_' + monthStr;
+  state.mensualNotes[key] = text;
+  if (window._fbSaveMensualNote) await window._fbSaveMensualNote(state.currentMember, monthStr, text);
+  showToast('Notas del mes guardadas ✓');
+}
+
+function printReporteMensual() {
+  const monthStr = document.getElementById('reportMonth').value || new Date().toISOString().slice(0,7);
+  const weeks = entriesOfMonth(monthStr);
+  if (!weeks.length) { showToast('No hay datos en este mes', true); return; }
+  const [y,m] = monthStr.split('-').map(Number);
+  const prevDate = new Date(y, m-2, 1);
+  const prevWeeks = entriesOfMonth(`${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`);
+  const monthLabel = MESES_FULL[m-1] + ' ' + y;
+  const note = (state.mensualNotes[state.currentMember+'_'+monthStr]) || '';
+
+  const rowFor = (it) => {
+    const sum = summarizeItem(it, weeks);
+    if (sum.empty) return `<tr><td>${it.label}</td><td style="text-align:right;color:#999;">—</td></tr>`;
+    if (sum.type==='scale') {
+      const tr = scaleTrend(it, weeks, prevWeeks);
+      const arrow = (d)=> d==null||Math.abs(d)<0.25?'→':(d>0?'↑':'↓');
+      return `<tr><td>${it.label}</td><td style="text-align:right;"><strong>${sum.avg.toFixed(1)}/5</strong> &nbsp; ${arrow(tr.intra)} mes ${tr.vsPrev!=null?'&nbsp; '+arrow(tr.vsPrev)+' vs ant.':''}</td></tr>`;
+    }
+    if (sum.type==='state') return `<tr><td>${it.label}</td><td style="text-align:right;">${sum.mode.charAt(0).toUpperCase()+sum.mode.slice(1)} (${sum.count[sum.mode]}/${sum.n})</td></tr>`;
+    if (sum.type==='yesno') return `<tr><td>${it.label}</td><td style="text-align:right;">Sí en ${sum.si}/${sum.total} sem.</td></tr>`;
+    if (sum.type==='text') return `<tr><td>${it.label}</td><td style="text-align:right;font-size:11px;">${sum.notes.join(' · ')}</td></tr>`;
+    return '';
+  };
+
+  const w = window.open('', '_blank');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Reporte ${monthLabel}</title>
+    <style>
+      body{font-family:Arial,sans-serif;color:#222;padding:28px;max-width:760px;margin:0 auto;}
+      .head{display:flex;justify-content:space-between;border-bottom:2px solid #5b3fa8;padding-bottom:8px;margin-bottom:6px;}
+      .brand{font-size:15px;font-weight:bold;color:#5b3fa8;}
+      h1{font-size:17px;color:#5b3fa8;margin:8px 0 2px;}
+      .sub{color:#555;font-size:12px;margin-bottom:14px;}
+      h2{font-size:13px;color:#fff;background:#7c5fc0;padding:5px 8px;margin:16px 0 0;border-radius:4px 4px 0 0;}
+      table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:4px;}
+      td{padding:5px 8px;border-bottom:1px solid #eee;}
+      .nota{margin-top:14px;border:1px solid #ede7fb;background:#faf8ff;border-radius:6px;padding:10px;font-size:12px;}
+      .firma{margin-top:40px;display:flex;justify-content:space-between;font-size:11px;color:#555;}
+      .firma div{border-top:1px solid #999;padding-top:4px;width:45%;text-align:center;}
+      .foot{margin-top:24px;font-size:9px;color:#aaa;text-align:center;}
+      @media print{body{padding:0;}}
+    </style></head><body>
+    <div class="head"><div class="brand">🏠 RESIDENCIA MENASHO</div><div style="font-size:11px;color:#777;">Reporte Mensual de Residente</div></div>
+    <h1>Reporte de salud — ${state.currentMember}</h1>
+    <div class="sub">Periodo: <strong>${monthLabel}</strong> · ${weeks.length} semana(s) · Generado: ${new Date().toLocaleDateString('es-MX')}</div>
+    ${REPORT.map(c => `<h2>${c.cat}</h2><table>${c.subs.flatMap(s=>s.items).map(rowFor).join('')}</table>`).join('')}
+    <div style="font-size:10px;color:#888;margin-top:8px;">Escala 1 a 5 (5 = mejor/más frecuente). ↑↓ = tendencia. Estados y sí/no resumen las semanas del mes.</div>
+    ${note?`<div class="nota"><strong>Notas de cierre del mes:</strong> ${note}</div>`:''}
+    <div class="firma"><div>Elaboró (cuidador)</div><div>Revisó</div></div>
+    <div class="foot">Gestión Residencia MENASHO · Documento de seguimiento, no sustituye criterio médico profesional.</div>
+    </body></html>`);
+  w.document.close();
+  setTimeout(()=>w.print(), 400);
+}
+
 // ── TABS ──
 function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(el=>el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el=>el.classList.remove('active'));
   document.getElementById('tab-'+name).classList.add('active');
-  const map = { resumen:'resumen', registro:'registrar', historial:'historial', consultas:'consultas', medicacion:'medicaci' };
+  const map = { resumen:'resumen', registro:'semanal', mensual:'mensual', historial:'historial', consultas:'consultas', medicacion:'medicaci' };
   document.querySelectorAll('.tab-btn').forEach(b=>{ if (b.textContent.toLowerCase().includes(map[name]||name)) b.classList.add('active'); });
   if (name==='resumen') renderResumen();
+  if (name==='registro') { if (!document.getElementById('entryWeek').value) clearEntryForm(); }
+  if (name==='mensual') renderMensual();
   if (name==='historial') renderHistorial();
   if (name==='consultas') renderConsultas();
   if (name==='medicacion') renderMeds();
@@ -1030,10 +1409,11 @@ document.body.appendChild(loadingDiv);
 async function init() {
   try {
     await load();
-    document.getElementById('entryDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('entryWeek').value = isoWeekString(new Date());
+    document.getElementById('reportMonth').value = new Date().toISOString().slice(0,7);
     document.getElementById('consultaDate').value = new Date().toISOString().split('T')[0];
     document.getElementById('medSince').value = new Date().toISOString().split('T')[0];
-    renderScales();
+    onWeekChange();
     renderAll();
     applyRolePermissions();
     hideLoading();
