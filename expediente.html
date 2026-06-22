@@ -693,11 +693,12 @@ function renderResumen() {
   const last7 = entries.slice(0, 7);
   const avgOf = (key, list) => { const vals = list.map(e=>e.scores?.[key]).filter(v=>typeof v==='number'); return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null; };
 
-  const kpiKeys = ['animo','mental','fisico','social'];
+  const kpiKeys = KPI_KEYS;
   document.getElementById('resumenKpis').innerHTML = kpiKeys.map(k => {
     const s = SCALES.find(x=>x.key===k);
+    if (!s) return '';
     const avg = avgOf(k, last7);
-    const face = avg!=null ? s.faces[Math.min(4, Math.round(avg)-1)] : '—';
+    const face = avg!=null ? s.faces[Math.min(4, Math.max(0, Math.round(avg)-1))] : '—';
     return `<div class="kpi-card" style="--card-color:${SCALE_COLORS[k]}"><div class="kpi-label">${s.label}</div><div class="kpi-value" style="color:${SCALE_COLORS[k]}">${avg!=null?avg.toFixed(1):'—'} <span style="font-size:1.3rem">${face}</span></div><div class="kpi-sub">Promedio últimas 7 semanas</div></div>`;
   }).join('');
 
